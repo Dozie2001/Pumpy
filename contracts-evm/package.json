@@ -11,12 +11,14 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "typecheck": "tsc --noEmit",
-    "deploy:shannon": "hardhat ignition deploy ignition/modules/PumpyDecisionRegistry.ts --network shannon"
+    "deploy:shannon": "HARDHAT_IGNITION_CONFIRM_DEPLOYMENT=true node --env-file=../.env ./node_modules/hardhat/dist/src/cli.js ignition deploy ignition/modules/PumpyDecisionRegistry.ts --network shannon",
+    "authorize:momentum": "node --env-file=../.env --import tsx scripts/authorize-momentum-max.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "5.0.7",
     "@types/node": "^22.0.0",
     "hardhat": "3.13.0",
+    "tsx": "4.23.12",
     "typescript": "^5.9.0",
     "viem": "^2.47.6"
   }
