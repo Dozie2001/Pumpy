@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Pumpy">
+  <rect width="128" height="128" rx="32" fill="#07090f"/>
+  <path fill="#b8ff4a" fill-rule="evenodd" d="M35 22h34c23 0 38 13 38 34S92 90 69 90H55v16H35V22Zm20 18v32h13c12 0 19-5 19-16s-7-16-19-16H55Z"/>
+  <circle cx="94" cy="96" r="9" fill="#58dbff"/>
+</svg>
