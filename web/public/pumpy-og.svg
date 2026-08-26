@@ -11,8 +11,16 @@
   <rect width="1200" height="630" fill="url(#g)"/>
   <rect width="1200" height="630" fill="url(#grid)"/>
   <rect x="78" y="72" width="1044" height="486" rx="52" fill="#111621" stroke="#2a3444"/>
-  <circle cx="139" cy="134" r="18" fill="#b8ff4a"/>
-  <text x="178" y="151" fill="#f5f7fb" font-family="system-ui,sans-serif" font-size="66" font-weight="900">PUMPY</text>
+  <g transform="translate(112 107) scale(.42)">
+    <rect width="128" height="128" rx="30" fill="#07090f"/>
+    <path fill="#b8ff4a" d="M24 20h43c25 0 41 14 41 36 0 24-18 38-45 38H50v14H24V20Z"/>
+    <rect x="45" y="39" width="43" height="34" rx="17" fill="#07090f"/>
+    <circle cx="66.5" cy="56" r="10" fill="#58dbff"/>
+    <circle cx="70" cy="52.5" r="3" fill="#f5f7fb"/>
+    <rect x="99" y="91" width="12" height="12" rx="3" fill="#58dbff"/>
+    <rect x="103" y="78" width="8" height="8" rx="2" fill="#58dbff" opacity=".72"/>
+  </g>
+  <text x="184" y="151" fill="#f5f7fb" font-family="system-ui,sans-serif" font-size="66" font-weight="900">PUMPY</text>
   <text x="122" y="282" fill="#f5f7fb" font-family="system-ui,sans-serif" font-size="58" font-weight="850">Beat the market.</text>
   <text x="122" y="354" fill="#b8ff4a" font-family="system-ui,sans-serif" font-size="58" font-weight="850">Then beat the bot.</text>
   <text x="124" y="430" fill="#b4becc" font-family="ui-monospace,monospace" font-size="24">PLAYER VS TRANSPARENT BOT · DREAMDEX · SOMNIA</text>

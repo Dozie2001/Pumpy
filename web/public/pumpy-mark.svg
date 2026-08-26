@@ -1,5 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Pumpy">
-  <rect width="128" height="128" rx="32" fill="#07090f"/>
-  <path fill="#b8ff4a" fill-rule="evenodd" d="M35 22h34c23 0 38 13 38 34S92 90 69 90H55v16H35V22Zm20 18v32h13c12 0 19-5 19-16s-7-16-19-16H55Z"/>
-  <circle cx="94" cy="96" r="9" fill="#58dbff"/>
+  <title>Pumpy</title>
+  <rect width="128" height="128" rx="30" fill="#07090f"/>
+  <path fill="#b8ff4a" d="M24 20h43c25 0 41 14 41 36 0 24-18 38-45 38H50v14H24V20Z"/>
+  <rect x="45" y="39" width="43" height="34" rx="17" fill="#07090f"/>
+  <circle cx="66.5" cy="56" r="10" fill="#58dbff"/>
+  <circle cx="70" cy="52.5" r="3" fill="#f5f7fb"/>
+  <rect x="99" y="91" width="12" height="12" rx="3" fill="#58dbff"/>
+  <rect x="103" y="78" width="8" height="8" rx="2" fill="#58dbff" opacity=".72"/>
 </svg>

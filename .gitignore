@@ -17,6 +17,7 @@ node_modules/
 .vinxi/
 .vite/
 .wrangler/
+.vercel/
 dist/
 build/
 
@@ -29,6 +30,8 @@ logs/
 # ── Testing / coverage ─────────────────────────────────────
 coverage/
 .nyc_output/
+e2e-screenshots/
+.auth-state.json
 
 # ── Hardhat / EVM ─────────────────────────────────────────
 contracts-evm/artifacts/
