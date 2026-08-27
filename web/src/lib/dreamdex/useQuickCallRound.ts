@@ -1,3 +1,4 @@
+import { SOMNIA_TESTNET_ADDRESSES, erc6909Abi } from '@somnia-chain/markets-sdk'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { getDreamDexExchange } from './client'
@@ -22,7 +23,8 @@ import type { Address } from 'viem'
 type QuickCallState = {
   round: QuickCallRound | null
   snapshot: QuickCallChainSnapshot | null
-  phase: 'idle' | 'loading' | 'ready' | 'claiming' | 'error'
+  phase:
+    'idle' | 'loading' | 'ready' | 'authorizing-claim' | 'claiming' | 'error'
   error: string | null
 }
 
@@ -148,7 +150,56 @@ export function useQuickCallRound(params: {
       return
     setState((current) => ({ ...current, phase: 'claiming', error: null }))
     try {
-      const trader = getDreamDexExchange().client.createTrader({
+      const client = getDreamDexExchange().client
+      const module = SOMNIA_TESTNET_ADDRESSES.binaryModule
+      if (!module) throw new Error('DreamDEX claim module is not configured')
+      const onchain = await client.getMarketOnchain(round.marketId)
+      const publicClient = client.getViemClient()
+      const isOperator = await publicClient.readContract({
+        address: onchain.outcomeToken,
+        abi: erc6909Abi,
+        functionName: 'isOperator',
+        args: [params.session.address, module],
+      })
+      if (!isOperator) {
+        setState((current) => ({
+          ...current,
+          phase: 'authorizing-claim',
+          error: null,
+        }))
+        const approvalHash = await params.session.walletClient.writeContract({
+          account: params.session.address,
+          chain: params.session.walletClient.chain,
+          address: onchain.outcomeToken,
+          abi: erc6909Abi,
+          functionName: 'setOperator',
+          args: [module, true],
+        })
+        const approvalReceipt = await publicClient.waitForTransactionReceipt({
+          hash: approvalHash,
+        })
+        if (approvalReceipt.status !== 'success') {
+          throw new Error('The one-time claim authorization reverted')
+        }
+        const stillClaimable = await client.getClaimable(params.session.address)
+        const refreshedClaim = stillClaimable.find(
+          (entry) =>
+            entry.marketId.toLowerCase() === round.marketId.toLowerCase() &&
+            entry.outcomeIdx === round.outcomeIndex,
+        )
+        if (!refreshedClaim || refreshedClaim.amount < snapshot.claimableRaw) {
+          throw new Error(
+            'Claimability changed after authorization; refresh the position',
+          )
+        }
+        setState((current) => ({
+          ...current,
+          phase: 'claiming',
+          error: null,
+        }))
+      }
+
+      const trader = client.createTrader({
         walletClient: params.session.walletClient,
         decimals: round.collateralDecimals,
       })
@@ -158,8 +209,12 @@ export function useQuickCallRound(params: {
         outcomeIdx: round.outcomeIndex,
         operatorId: round.operatorId ?? undefined,
         venueId: round.venueId ?? undefined,
-        autoApprove: true,
+        outcomeToken: onchain.outcomeToken,
+        autoApprove: false,
       })
+      if (result.receipt.status !== 'success') {
+        throw new Error('The DreamDEX claim transaction reverted')
+      }
       const claimed = {
         ...round,
         claimHash: result.hash,
@@ -185,35 +240,32 @@ export function useQuickCallRound(params: {
     }
   }, [params.session])
 
-  const recordCashout = useCallback(
-    (outcome: PlayerCashoutOutcome) => {
-      const round = stateRef.current.round
-      if (
-        !round ||
-        outcome.status !== 'filled' ||
-        outcome.filledQuantityRaw < BigInt(round.filledQuantityRaw) ||
-        typeof window === 'undefined'
-      )
-        return
-      const cashedOut: QuickCallRound = {
-        ...round,
-        cashoutHash: outcome.hash,
-        cashoutProceedsRaw: outcome.proceedsRaw.toString(),
-        cashedOutAt: Date.now(),
-      }
-      writeQuickCallRound(window.localStorage, cashedOut)
-      setState((current) => ({
-        ...current,
-        round: cashedOut,
-        snapshot: current.snapshot
-          ? { ...current.snapshot, positionRaw: 0n, phase: 'cashed-out' }
-          : null,
-        phase: 'ready',
-        error: null,
-      }))
-    },
-    [],
-  )
+  const recordCashout = useCallback((outcome: PlayerCashoutOutcome) => {
+    const round = stateRef.current.round
+    if (
+      !round ||
+      outcome.status !== 'filled' ||
+      outcome.filledQuantityRaw < BigInt(round.filledQuantityRaw) ||
+      typeof window === 'undefined'
+    )
+      return
+    const cashedOut: QuickCallRound = {
+      ...round,
+      cashoutHash: outcome.hash,
+      cashoutProceedsRaw: outcome.proceedsRaw.toString(),
+      cashedOutAt: Date.now(),
+    }
+    writeQuickCallRound(window.localStorage, cashedOut)
+    setState((current) => ({
+      ...current,
+      round: cashedOut,
+      snapshot: current.snapshot
+        ? { ...current.snapshot, positionRaw: 0n, phase: 'cashed-out' }
+        : null,
+      phase: 'ready',
+      error: null,
+    }))
+  }, [])
 
   const clear = useCallback(() => {
     if (params.address && typeof window !== 'undefined') {

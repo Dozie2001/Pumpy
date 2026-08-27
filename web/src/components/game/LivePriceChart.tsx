@@ -76,18 +76,19 @@ export function LivePriceChart({
     const draw = (now: number) => {
       const delta = Math.min(64, now - lastFrame)
       lastFrame = now
-      const targetPrice = targetPriceRef.current
+      const liveTargetPrice = targetPriceRef.current
       const marketTarget = marketTargetRef.current
       const points = pointsRef.current
       const reducedMotion = window.matchMedia(
         '(prefers-reduced-motion: reduce)',
       ).matches
 
-      if (targetPrice != null) {
-        if (displayedPrice === 0 || reducedMotion) displayedPrice = targetPrice
+      if (liveTargetPrice != null) {
+        if (displayedPrice === 0 || reducedMotion)
+          displayedPrice = liveTargetPrice
         else
           displayedPrice +=
-            (targetPrice - displayedPrice) * ease(delta, PRICE_EASE_MS)
+            (liveTargetPrice - displayedPrice) * ease(delta, PRICE_EASE_MS)
       }
 
       const nowEpoch = Date.now()
@@ -157,6 +158,13 @@ export function LivePriceChart({
               plotHeight,
         }
 
+        if (!chartPoints.length || chartPoints.at(-1)?.x !== tip.x)
+          chartPoints.push(tip)
+        else chartPoints[chartPoints.length - 1] = tip
+
+        drawGuide(context, tip, width, lineColor)
+        drawArea(context, chartPoints, height, lineColor)
+        drawLine(context, chartPoints, lineColor)
         if (marketTarget != null && marketTarget > 0) {
           const targetY =
             TOP_PAD +
@@ -170,14 +178,6 @@ export function LivePriceChart({
             displayedPrice,
           )
         }
-
-        if (!chartPoints.length || chartPoints.at(-1)?.x !== tip.x)
-          chartPoints.push(tip)
-        else chartPoints[chartPoints.length - 1] = tip
-
-        drawGuide(context, tip, width, lineColor)
-        drawArea(context, chartPoints, height, lineColor)
-        drawLine(context, chartPoints, lineColor)
         drawLivePoint(context, tip, lineColor)
         drawPriceTag(context, tip, displayedPrice, lineColor)
       }
@@ -213,8 +213,8 @@ export function LivePriceChart({
         ref={canvasRef}
         className="absolute inset-0 z-[1] h-full w-full"
         aria-label={
-        state.price == null
-          ? 'Waiting for live oracle price'
+          state.price == null
+            ? 'Waiting for live oracle price'
             : `${state.asset} live oracle chart at ${state.price.toFixed(2)} dollars${targetPrice ? `; target ${targetPrice.toFixed(2)} dollars` : ''}`
         }
       />

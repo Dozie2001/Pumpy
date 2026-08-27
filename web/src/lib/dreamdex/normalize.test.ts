@@ -51,13 +51,16 @@ function binaryMarket(overrides: Partial<BinaryMarket> = {}): BinaryMarket {
 
 describe('DreamDEX binary market normalization', () => {
   it('keeps a zero strike as an opening-price market', () => {
-    const market = normalizeBinaryMarket(binaryMarket(), NOW, {
-      symbol: 'tUSDC',
-      decimals: 6,
-    })
+    const market = normalizeBinaryMarket(
+      binaryMarket(),
+      NOW,
+      { symbol: 'tUSDC', decimals: 6 },
+      '8031395',
+    )
 
     expect(market.reference).toBe('opening-price')
     expect(market.strikeRaw).toBe('0')
+    expect(market.targetPriceRaw).toBe('8031395')
     expect(market.marketId).toBe(`0x${'01'.repeat(32)}`)
     expect(market.collateralSymbol).toBe('tUSDC')
   })
@@ -132,6 +135,16 @@ describe('DreamDEX binary market normalization', () => {
     expect(selectPumpyMarket([fixedStrike, opening], 'BTC', NOW)).toEqual(
       opening,
     )
+  })
+
+  it('uses the fixed strike itself as the target', () => {
+    const market = normalizeBinaryMarket(
+      binaryMarket({ strike: '7725105' }),
+      NOW,
+    )
+
+    expect(market.reference).toBe('fixed-strike')
+    expect(market.targetPriceRaw).toBe('7725105')
   })
 
   it('never selects a market inside the same safety window used by placement', () => {

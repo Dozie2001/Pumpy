@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { getDreamDexExchange } from './client'
+import { isFullCashoutQuote } from './trade-safety'
 import {
   PlayerCashoutError,
   placePreparedPlayerCashout,
@@ -123,77 +124,93 @@ export function usePlayerCashout(params: {
     }
   }, [params.enabled, params.round?.marketId, refresh])
 
-  const cashOut = useCallback(async (): Promise<PlayerCashoutOutcome | null> => {
-    const quote = stateRef.current.quote
-    if (!params.round || !params.session || !quote) return null
-    if (quote.fillableQuantityRaw < quote.quantityRaw) {
+  const cashOut =
+    useCallback(async (): Promise<PlayerCashoutOutcome | null> => {
+      const quote = stateRef.current.quote
+      if (!params.round || !params.session || !quote) return null
+      if (
+        !isFullCashoutQuote({
+          positionRaw: quote.positionRaw,
+          quotedQuantityRaw: quote.quantityRaw,
+          fillableQuantityRaw: quote.fillableQuantityRaw,
+        })
+      ) {
+        setState((current) => ({
+          ...current,
+          phase: 'unavailable',
+          error: 'The live book cannot absorb the full position yet',
+        }))
+        return null
+      }
+
       setState((current) => ({
         ...current,
-        phase: 'unavailable',
-        error: 'The live book cannot absorb the full position yet',
+        phase: 'submitting',
+        outcome: null,
+        error: null,
       }))
-      return null
-    }
-
-    setState((current) => ({
-      ...current,
-      phase: 'submitting',
-      outcome: null,
-      error: null,
-    }))
-    try {
-      const outcome = await placePreparedPlayerCashout({
-        cashout: quote,
-        round: params.round,
-        wallet: params.session,
-        onWalletStep: (step) =>
+      try {
+        const outcome = await placePreparedPlayerCashout({
+          cashout: quote,
+          round: params.round,
+          wallet: params.session,
+          onWalletStep: (step) =>
+            setState((current) => ({
+              ...current,
+              phase:
+                step === 'approving'
+                  ? 'approving'
+                  : step === 'refreshing'
+                    ? 'refreshing'
+                    : 'submitting',
+            })),
+        })
+        if (outcome.status !== 'filled') {
           setState((current) => ({
             ...current,
-            phase:
-              step === 'approving'
-                ? 'approving'
-                : step === 'refreshing'
-                  ? 'refreshing'
-                  : 'submitting',
-          })),
-      })
-      if (outcome.status !== 'filled') {
+            phase: 'error',
+            outcome,
+            error:
+              outcome.status === 'partial'
+                ? 'Only part of the position sold. Refreshing the remaining onchain balance.'
+                : 'The exit order did not fill. Your position remains open.',
+          }))
+          return outcome
+        }
+        setState({ phase: 'ready', quote: null, outcome, error: null })
+        return outcome
+      } catch (cause) {
+        if (isWalletRejection(cause)) {
+          setState((current) => ({ ...current, phase: 'ready', error: null }))
+          return null
+        }
         setState((current) => ({
           ...current,
           phase: 'error',
-          outcome,
           error:
-            outcome.status === 'partial'
-              ? 'Only part of the position sold. Refreshing the remaining onchain balance.'
-              : 'The exit order did not fill. Your position remains open.',
+            cause instanceof Error
+              ? cause.message
+              : 'The cash out did not complete',
         }))
-        return outcome
-      }
-      setState({ phase: 'ready', quote: null, outcome, error: null })
-      return outcome
-    } catch (cause) {
-      if (isWalletRejection(cause)) {
-        setState((current) => ({ ...current, phase: 'ready', error: null }))
+        if (
+          cause instanceof PlayerCashoutError &&
+          cause.code === 'STALE_QUOTE'
+        ) {
+          window.setTimeout(() => void refresh(), 0)
+        }
         return null
       }
-      setState((current) => ({
-        ...current,
-        phase: 'error',
-        error:
-          cause instanceof Error ? cause.message : 'The cash out did not complete',
-      }))
-      if (cause instanceof PlayerCashoutError && cause.code === 'STALE_QUOTE') {
-        window.setTimeout(() => void refresh(), 0)
-      }
-      return null
-    }
-  }, [params.round, params.session, refresh])
+    }, [params.round, params.session, refresh])
 
   return {
     ...state,
     fullExitAvailable:
       state.quote !== null &&
-      state.quote.fillableQuantityRaw >= state.quote.quantityRaw,
+      isFullCashoutQuote({
+        positionRaw: state.quote.positionRaw,
+        quotedQuantityRaw: state.quote.quantityRaw,
+        fillableQuantityRaw: state.quote.fillableQuantityRaw,
+      }),
     refresh,
     cashOut,
   }

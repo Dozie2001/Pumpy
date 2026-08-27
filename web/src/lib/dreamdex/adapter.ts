@@ -34,8 +34,10 @@ export async function discoverEventMarkets(): Promise<Array<PumpyEventMarket>> {
   const openingIds = rows
     .filter((row) => row.strike === '0')
     .map((row) => row.marketId)
-  const openingPrices = openingIds.length
-    ? await client.getOpeningPrices(openingIds).catch(() => ({}))
+  const openingPrices: Record<string, string | null> = openingIds.length
+    ? await client
+        .getOpeningPrices(openingIds)
+        .catch((): Record<string, string | null> => ({}))
     : {}
 
   const normalized = await Promise.all(
@@ -88,10 +90,15 @@ export async function watchEventMarket(
       depth: 1,
     })
     listener({
-      market: normalizeBinaryMarket(liveMarket, undefined, {
-        symbol: market.collateralSymbol,
-        decimals: market.collateralDecimals,
-      }, market.reference === 'opening-price' ? market.targetPriceRaw : null),
+      market: normalizeBinaryMarket(
+        liveMarket,
+        undefined,
+        {
+          symbol: market.collateralSymbol,
+          decimals: market.collateralDecimals,
+        },
+        market.reference === 'opening-price' ? market.targetPriceRaw : null,
+      ),
       quote: {
         yesAsk: book.yesAsks[0]
           ? probabilityFromRaw(book.yesAsks[0].price, liveMarket.quoteDecimals)

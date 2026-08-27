@@ -4,7 +4,9 @@ import {
   PLAYER_QUOTE_TTL_MS,
   classifyPlayerOrder,
   filledOrderCostRaw,
+  filledSellProceedsRaw,
   hasRequiredBotCommitment,
+  isFullCashoutQuote,
   isPreparedTradeFresh,
   minimumMarketHeadroomSeconds,
 } from './trade-safety'
@@ -81,5 +83,39 @@ describe('player trade safety', () => {
     expect(
       filledOrderCostRaw({ side: 'DOWN', collateralDecimals: 6, fills }),
     ).toBe(3_000_000n)
+  })
+
+  it('uses floor-rounded receipt proceeds for YES and NO cash outs', () => {
+    const fills = [{ quantityFilled: 8_000_001n, fillPrice: 625_001n }]
+    expect(
+      filledSellProceedsRaw({ side: 'UP', collateralDecimals: 6, fills }),
+    ).toBe(5_000_008n)
+    expect(
+      filledSellProceedsRaw({ side: 'DOWN', collateralDecimals: 6, fills }),
+    ).toBe(2_999_992n)
+  })
+
+  it('only calls a quote a full exit when no position or book remainder exists', () => {
+    expect(
+      isFullCashoutQuote({
+        positionRaw: 10n,
+        quotedQuantityRaw: 10n,
+        fillableQuantityRaw: 10n,
+      }),
+    ).toBe(true)
+    expect(
+      isFullCashoutQuote({
+        positionRaw: 11n,
+        quotedQuantityRaw: 10n,
+        fillableQuantityRaw: 10n,
+      }),
+    ).toBe(false)
+    expect(
+      isFullCashoutQuote({
+        positionRaw: 10n,
+        quotedQuantityRaw: 10n,
+        fillableQuantityRaw: 9n,
+      }),
+    ).toBe(false)
   })
 })

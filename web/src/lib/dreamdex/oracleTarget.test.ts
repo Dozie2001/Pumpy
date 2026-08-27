@@ -28,7 +28,11 @@ describe('DreamDEX oracle target formatting', () => {
       isCallCurrentlyWinning({ side: 'UP', livePrice: 100, targetPrice: 100 }),
     ).toBe(true)
     expect(
-      isCallCurrentlyWinning({ side: 'DOWN', livePrice: 100, targetPrice: 100 }),
+      isCallCurrentlyWinning({
+        side: 'DOWN',
+        livePrice: 100,
+        targetPrice: 100,
+      }),
     ).toBe(false)
     expect(
       isCallCurrentlyWinning({ side: 'DOWN', livePrice: 99, targetPrice: 100 }),

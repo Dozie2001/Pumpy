@@ -23,6 +23,10 @@ const market = {
   operatorId: 7,
   venueId: `0x${'55'.repeat(32)}`,
   expiresAt: 2_000,
+  intervalSeconds: 900,
+  reference: 'opening-price',
+  strikeRaw: '0',
+  targetPriceRaw: '8031395',
 } as unknown as PumpyEventMarket
 const trade = {
   side: 'UP',
@@ -105,6 +109,9 @@ describe('Quick Call persistence and reconciliation', () => {
     expect(snapshot({ positionRaw: 8n, winningOutcome: 1 }).phase).toBe('lost')
     expect(snapshot({ round: { ...round, claimedAt: 5 } }).phase).toBe(
       'claimed',
+    )
+    expect(snapshot({ round: { ...round, cashedOutAt: 5 } }).phase).toBe(
+      'cashed-out',
     )
   })
 })

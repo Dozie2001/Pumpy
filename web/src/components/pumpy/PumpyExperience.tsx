@@ -331,13 +331,17 @@ export function PumpyExperience() {
         },
         main: {
           label: canClaim
-            ? quickCall.phase === 'claiming'
-              ? 'CLAIMING'
-              : 'CLAIM'
+            ? quickCall.phase === 'authorizing-claim'
+              ? 'AUTHORIZE'
+              : quickCall.phase === 'claiming'
+                ? 'CLAIMING'
+                : 'CLAIM'
             : 'CHECK CHAIN',
           color: canClaim ? ('amber' as const) : ('neutral' as const),
           loading:
-            quickCall.phase === 'loading' || quickCall.phase === 'claiming',
+            quickCall.phase === 'loading' ||
+            quickCall.phase === 'authorizing-claim' ||
+            quickCall.phase === 'claiming',
           onPress: () =>
             canClaim ? void quickCall.claim() : void quickCall.refresh(),
         },
@@ -1323,7 +1327,7 @@ function QuickCallPositionScreen({
   const round = state.round!
   const snapshot = state.snapshot
   const chainPhase = snapshot?.phase ?? 'indexing'
-  const isTerminal = ['claimed', 'lost'].includes(chainPhase)
+  const isTerminal = ['claimed', 'lost', 'cashed-out'].includes(chainPhase)
   const title = {
     indexing: 'Order confirmed',
     live: 'Your call is live',
@@ -1332,6 +1336,7 @@ function QuickCallPositionScreen({
     lost: 'Market called it differently',
     voided: 'Market voided',
     claimed: 'Payout claimed',
+    'cashed-out': 'Position cashed out',
   }[chainPhase]
   const message = {
     indexing:
@@ -1344,6 +1349,8 @@ function QuickCallPositionScreen({
     voided: 'Both sides may redeem according to the market’s void payout rule.',
     claimed:
       'The claim receipt is confirmed and the payout was routed to your wallet.',
+    'cashed-out':
+      'The position was sold on DreamDEX before expiry. No settlement claim is required.',
   }[chainPhase]
   const phaseColor =
     chainPhase === 'lost'
@@ -1364,7 +1371,9 @@ function QuickCallPositionScreen({
             {title}
           </h1>
         </div>
-        {state.phase === 'loading' || state.phase === 'claiming' ? (
+        {state.phase === 'loading' ||
+        state.phase === 'authorizing-claim' ||
+        state.phase === 'claiming' ? (
           <LoaderCircle
             className="h-6 w-6 animate-spin text-pumpy-cyan motion-reduce:animate-none"
             aria-label="Refreshing position"
@@ -1465,14 +1474,19 @@ function QuickCallPositionScreen({
             <button
               type="button"
               data-console-tap
-              disabled={state.phase === 'claiming'}
+              disabled={
+                state.phase === 'authorizing-claim' ||
+                state.phase === 'claiming'
+              }
               onClick={() => void state.claim()}
               aria-busy={state.phase === 'claiming'}
               className="min-h-11 rounded-[16px] bg-pumpy-accent px-4 text-sm font-black text-pumpy-accent-ink disabled:cursor-wait disabled:bg-surface-raised disabled:text-text-3 focus-visible:ring-2 focus-visible:ring-white"
             >
-              {state.phase === 'claiming'
-                ? 'Confirming claim…'
-                : 'Claim payout'}
+              {state.phase === 'authorizing-claim'
+                ? 'Authorize position…'
+                : state.phase === 'claiming'
+                  ? 'Confirming claim…'
+                  : 'Claim payout'}
             </button>
           ) : isTerminal ? (
             <button

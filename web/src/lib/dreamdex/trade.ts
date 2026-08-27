@@ -11,7 +11,9 @@ import {
   PLAYER_QUOTE_TTL_MS,
   classifyPlayerOrder,
   filledOrderCostRaw,
+  filledSellProceedsRaw,
   hasRequiredBotCommitment,
+  isFullCashoutQuote,
   isPreparedTradeFresh,
   minimumMarketHeadroomSeconds,
 } from './trade-safety'
@@ -132,7 +134,10 @@ export async function preparePlayerCashout(params: {
   positionRaw: bigint
 }): Promise<PreparedPlayerCashout> {
   if (params.positionRaw <= 0n) {
-    throw new PlayerCashoutError('No open position is available to sell', 'NO_POSITION')
+    throw new PlayerCashoutError(
+      'No open position is available to sell',
+      'NO_POSITION',
+    )
   }
   try {
     assertLiveBook(params.round.poolAddress)
@@ -250,7 +255,8 @@ export async function placePreparedPlayerCashout(params: {
     )
   }
 
-  const outcomeId = params.round.outcomeIndex === 0 ? onchain.yesId : onchain.noId
+  const outcomeId =
+    params.round.outcomeIndex === 0 ? onchain.yesId : onchain.noId
   const positionRaw = await client.getOutcomeBalance({
     outcomeToken: onchain.outcomeToken,
     account: params.wallet.address,
@@ -273,7 +279,13 @@ export async function placePreparedPlayerCashout(params: {
       'STALE_QUOTE',
     )
   }
-  if (refreshed.fillableQuantityRaw < refreshed.quantityRaw) {
+  if (
+    !isFullCashoutQuote({
+      positionRaw: params.cashout.positionRaw,
+      quotedQuantityRaw: refreshed.quantityRaw,
+      fillableQuantityRaw: refreshed.fillableQuantityRaw,
+    })
+  ) {
     throw new PlayerCashoutError(
       'The live book cannot absorb the full position yet',
       'PARTIAL_LIQUIDITY',
@@ -355,7 +367,7 @@ export async function placePreparedPlayerCashout(params: {
     (total, fill) => total + fill.quantityFilled,
     0n,
   )
-  const proceedsRaw = filledOrderCostRaw({
+  const proceedsRaw = filledSellProceedsRaw({
     side: refreshed.side,
     collateralDecimals: refreshed.collateralDecimals,
     fills: result.fills,
@@ -683,4 +695,3 @@ async function preparePlayerTradeRaw(params: {
     marketExpiresAt: Number(onchain.expiry),
   }
 }
-  PreparedPlayerCashout,

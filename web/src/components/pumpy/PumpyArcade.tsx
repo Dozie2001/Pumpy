@@ -61,8 +61,8 @@ import {
   hopLose,
   hopResetCombo,
   hopScore,
-  luckyLose,
   luckyCashout,
+  luckyLose,
   luckyWin,
   slotPick,
   slotSpin,
@@ -147,8 +147,7 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     round: quickCall.round,
     positionRaw: quickCall.snapshot?.positionRaw ?? 0n,
     session: wallet.session,
-    enabled:
-      screen === 'position' && quickCall.snapshot?.phase === 'live',
+    enabled: screen === 'position' && quickCall.snapshot?.phase === 'live',
   })
   const testCollateral = useTestCollateral({ market, wallet })
   const quote = usePlayerQuote({
@@ -353,8 +352,6 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     if (outcome.status === 'filled') {
       quickCall.recordCashout(outcome)
       void testCollateral.refresh()
-      hapticPattern('cashOut')
-      luckyCashout()
     } else {
       void quickCall.refresh()
     }
@@ -486,6 +483,9 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
         cashout.phase === 'approving' ||
         cashout.phase === 'refreshing' ||
         cashout.phase === 'submitting'
+      const claimBusy =
+        quickCall.phase === 'authorizing-claim' ||
+        quickCall.phase === 'claiming'
       const canCashout =
         result === 'live' &&
         cashout.phase === 'ready' &&
@@ -502,7 +502,11 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
         },
         main: {
           label: canClaim
-            ? 'CLAIM'
+            ? quickCall.phase === 'authorizing-claim'
+              ? 'AUTHORIZE'
+              : quickCall.phase === 'claiming'
+                ? 'CLAIMING'
+                : 'CLAIM'
             : canPlayAgain
               ? 'PLAY AGAIN'
               : result === 'live'
@@ -516,12 +520,8 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
                         ? 'CASH OUT'
                         : 'REFRESH EXIT'
                 : 'CHECK CHAIN',
-          color:
-            canClaim || canPlayAgain || canCashout ? 'amber' : 'neutral',
-          loading:
-            quickCall.phase === 'loading' ||
-            quickCall.phase === 'claiming' ||
-            cashoutBusy,
+          color: canClaim || canPlayAgain || canCashout ? 'amber' : 'neutral',
+          loading: quickCall.phase === 'loading' || claimBusy || cashoutBusy,
           onPress: () => {
             if (canClaim) void quickCall.claim()
             else if (canPlayAgain) playAgain()
@@ -618,7 +618,6 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           error={quickCall.error}
           livePrice={livePrice}
           cashout={cashout}
-          onCashout={performCashout}
           onRefresh={quickCall.refresh}
         />
       )}
@@ -891,6 +890,10 @@ function LuckyGame({
   const available = collateral.snapshot
     ? formatUnits(collateral.snapshot.balanceRaw, collateral.snapshot.decimals)
     : null
+  const targetPrice = resolveOracleTargetPrice(
+    market.targetPriceRaw,
+    livePrice.price,
+  )?.price
   const nextAction =
     phase === 'submitting'
       ? walletStep === 'approving'
@@ -989,7 +992,12 @@ function LuckyGame({
         </div>
       </div>
 
-      <LivePriceChart state={livePrice} className="flex-1" />
+      <LivePriceChart
+        state={livePrice}
+        className="flex-1"
+        targetPrice={targetPrice}
+        side={dealt ? side : null}
+      />
 
       <div
         className={cnm(
@@ -1084,6 +1092,7 @@ function LuckyPosition({
   phase,
   error,
   livePrice,
+  cashout,
   onRefresh,
 }: {
   round: NonNullable<ReturnType<typeof useQuickCallRound>['round']>
@@ -1091,6 +1100,7 @@ function LuckyPosition({
   phase: ReturnType<typeof useQuickCallRound>['phase']
   error: string | null
   livePrice: LiveAssetPriceState
+  cashout: ReturnType<typeof usePlayerCashout>
   onRefresh: () => void | Promise<void>
 }) {
   const result = snapshot?.phase
@@ -1103,12 +1113,25 @@ function LuckyPosition({
     result === 'won' ||
     result === 'lost' ||
     result === 'voided' ||
-    result === 'claimed'
+    result === 'claimed' ||
+    result === 'cashed-out'
   const frozenPrice = useRef<LiveAssetPriceState | null>(null)
   if (!expired) {
     frozenPrice.current = { ...livePrice, points: [...livePrice.points] }
   }
   const chartState = expired ? (frozenPrice.current ?? livePrice) : livePrice
+  const targetPrice = resolveOracleTargetPrice(
+    snapshot?.targetPriceRaw ?? round.targetPriceRaw,
+    chartState.price,
+  )?.price
+  const currentlyWinning =
+    !expired && chartState.price != null && targetPrice != null
+      ? isCallCurrentlyWinning({
+          side: round.side,
+          livePrice: chartState.price,
+          targetPrice,
+        })
+      : null
   const costRaw = BigInt(round.escrowRaw)
   const filledPayoutRaw = BigInt(round.filledQuantityRaw)
   const payoutRaw =
@@ -1126,6 +1149,19 @@ function LuckyPosition({
   const payout = moneyFromRaw(payoutRaw, round.collateralDecimals)
   const profit = moneyFromRaw(profitRaw, round.collateralDecimals)
   const refund = moneyFromRaw(refundRaw, round.collateralDecimals)
+  const exitProceedsRaw = cashout.quote?.estimatedProceedsRaw ?? null
+  const exitProceeds =
+    exitProceedsRaw == null
+      ? null
+      : moneyFromRaw(exitProceedsRaw, round.collateralDecimals)
+  const exitPnlRaw = exitProceedsRaw == null ? null : exitProceedsRaw - costRaw
+  const exitPnl =
+    exitPnlRaw == null
+      ? null
+      : `${exitPnlRaw >= 0n ? '+' : '−'}$${moneyFromRaw(
+          exitPnlRaw >= 0n ? exitPnlRaw : -exitPnlRaw,
+          round.collateralDecimals,
+        )}`
 
   useEffect(() => {
     if (!expired || resolved || refreshedAtExpiry.current === round.marketId)
@@ -1140,6 +1176,7 @@ function LuckyPosition({
       key = `${round.marketId}:win`
     else if (result === 'lost') key = `${round.marketId}:loss`
     else if (result === 'claimed') key = `${round.marketId}:claimed`
+    else if (result === 'cashed-out') key = `${round.marketId}:cashed-out`
     if (!key || announced.current === key) return
     announced.current = key
     if (result === 'won' || result === 'claimable') {
@@ -1151,6 +1188,9 @@ function LuckyPosition({
     } else if (result === 'claimed') {
       hapticPattern('cashOut')
       chipsGranted()
+    } else if (result === 'cashed-out') {
+      hapticPattern('cashOut')
+      luckyCashout()
     }
   }, [result, round.marketId])
 
@@ -1174,10 +1214,10 @@ function LuckyPosition({
           </div>
           <div className="shrink-0 text-right">
             <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
-              Time
+              Target
             </div>
             <div className="mt-0.5 text-[20px] font-black leading-none text-text-2 tabular-nums">
-              {secondsLeft}s
+              {targetPrice == null ? 'Syncing' : `$${formatPrice(targetPrice)}`}
             </div>
           </div>
         </div>
@@ -1199,10 +1239,23 @@ function LuckyPosition({
           <div className="h-9 w-px bg-line-strong" />
           <div className="text-center">
             <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
-              Possible payout
+              {currentlyWinning === null
+                ? 'Line to beat'
+                : currentlyWinning
+                  ? 'Currently ahead'
+                  : 'Currently behind'}
             </div>
-            <div className="mt-1 text-[25px] font-black leading-none text-brand-500">
-              ${payout}
+            <div
+              className={cnm(
+                'mt-1 text-[25px] font-black leading-none',
+                currentlyWinning === false ? 'text-down' : 'text-brand-500',
+              )}
+            >
+              {targetPrice == null || chartState.price == null
+                ? '—'
+                : `${currentlyWinning ? '▲' : '▼'} $${formatPrice(
+                    Math.abs(chartState.price - targetPrice),
+                  )}`}
             </div>
           </div>
         </div>
@@ -1212,6 +1265,8 @@ function LuckyPosition({
             state={chartState}
             className="absolute inset-0"
             eventCountdown={String(secondsLeft)}
+            targetPrice={targetPrice}
+            side={round.side}
           />
           {expired && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/35">
@@ -1239,18 +1294,34 @@ function LuckyPosition({
               {expired ? 'Oracle resolution' : 'Position open'}
             </div>
             <div className="mt-1 text-[25px] font-black uppercase leading-none text-brand-500">
-              {expired ? 'Settling' : 'In play'}
+              {expired
+                ? 'Settling'
+                : currentlyWinning === true
+                  ? 'On target'
+                  : currentlyWinning === false
+                    ? 'Off target'
+                    : 'In play'}
             </div>
             <div className="mt-3 grid grid-cols-3 gap-2">
               <Readout label="Cost" value={`$${cost}`} />
-              <Readout label="Payout" value={`$${payout}`} />
-              <Readout label="Profit" value={`+$${profit}`} />
+              <Readout
+                label="Cash out"
+                value={exitProceeds == null ? '—' : `$${exitProceeds}`}
+              />
+              <Readout label="Exit P/L" value={exitPnl ?? '—'} />
             </div>
             <div className="mt-2 font-mono text-[8px] uppercase leading-[1.4] tracking-[0.06em] text-text-3">
               {expired
                 ? 'No result is shown until DreamDEX resolves onchain'
-                : 'The oracle—not the live display—decides the final result'}
+                : cashout.fullExitAvailable
+                  ? `Full exit quoted from the live book · payout if held: $${payout}`
+                  : 'Cash out needs enough live bid liquidity for the full position'}
             </div>
+            {!expired && cashout.error && (
+              <div className="mt-2 border-l-2 border-pumpy-caution pl-2 font-mono text-[8px] uppercase leading-[1.4] text-pumpy-caution">
+                {cashout.error}
+              </div>
+            )}
             {error && (
               <div className="mt-2 border-l-2 border-down pl-2 font-mono text-[8px] uppercase leading-[1.4] text-down">
                 {error}
@@ -1295,16 +1366,36 @@ function LuckyPosition({
                 value: `$${payout}`,
                 body: 'The payout claim was confirmed and sent to your wallet.',
               }
-            : {
-                tone: 'claimed' as const,
-                kicker: 'Market voided',
-                title: 'Returned',
-                value: `$${refund}`,
-                body:
-                  (snapshot?.claimableRaw ?? 0n) > 0n
-                    ? 'DreamDEX voided this market. Press CLAIM to retrieve the available refund.'
-                    : 'DreamDEX voided this market. Refund availability is still syncing.',
-              }
+            : result === 'cashed-out'
+              ? {
+                  tone: 'claimed' as const,
+                  kicker: 'Exit filled onchain',
+                  title: 'Cashed out',
+                  value: `${
+                    BigInt(round.cashoutProceedsRaw ?? '0') >= costRaw
+                      ? '+'
+                      : '−'
+                  }$${moneyFromRaw(
+                    BigInt(round.cashoutProceedsRaw ?? '0') >= costRaw
+                      ? BigInt(round.cashoutProceedsRaw ?? '0') - costRaw
+                      : costRaw - BigInt(round.cashoutProceedsRaw ?? '0'),
+                    round.collateralDecimals,
+                  )}`,
+                  body: `DreamDEX sold the position before expiry for $${moneyFromRaw(
+                    BigInt(round.cashoutProceedsRaw ?? '0'),
+                    round.collateralDecimals,
+                  )}. No settlement claim is required.`,
+                }
+              : {
+                  tone: 'claimed' as const,
+                  kicker: 'Market voided',
+                  title: 'Returned',
+                  value: `$${refund}`,
+                  body:
+                    (snapshot?.claimableRaw ?? 0n) > 0n
+                      ? 'DreamDEX voided this market. Press CLAIM to retrieve the available refund.'
+                      : 'DreamDEX voided this market. Refund availability is still syncing.',
+                }
 
   return (
     <div className="flex h-full flex-col">
@@ -1327,14 +1418,25 @@ function LuckyPosition({
             value={
               result === 'lost'
                 ? '$0.00'
-                : result === 'voided'
-                  ? `$${refund}`
-                  : `$${payout}`
+                : result === 'cashed-out'
+                  ? `$${moneyFromRaw(
+                      BigInt(round.cashoutProceedsRaw ?? '0'),
+                      round.collateralDecimals,
+                    )}`
+                  : result === 'voided'
+                    ? `$${refund}`
+                    : `$${payout}`
             }
           />
           <Readout
             label={result === 'lost' ? 'Lost' : 'Profit'}
-            value={result === 'lost' ? `−$${cost}` : `+$${profit}`}
+            value={
+              result === 'lost'
+                ? `−$${cost}`
+                : result === 'cashed-out'
+                  ? presentation.value
+                  : `+$${profit}`
+            }
           />
         </div>
         {error && (
@@ -1347,6 +1449,11 @@ function LuckyPosition({
             Claim {shortId(round.claimHash)}
           </p>
         )}
+        {round.cashoutHash && (
+          <p className="mx-auto mt-3 font-mono text-[8px] uppercase tracking-[0.1em] text-text-3">
+            Exit {shortId(round.cashoutHash)}
+          </p>
+        )}
       </GameSettlementScreen>
       <div className={cnm('border-t border-line-strong pt-3', RIM, RIM_BOTTOM)}>
         <div className="max-w-[62%] font-mono text-[9px] uppercase leading-[1.45] tracking-[0.08em] text-text-3">
@@ -1356,9 +1463,11 @@ function LuckyPosition({
               ? 'Refund ready · press claim'
               : result === 'claimed'
                 ? 'Claim recorded onchain'
-                : phase === 'loading' || result === 'won'
-                  ? 'Refreshing Event Contract state'
-                  : 'Press the big button to play again'}
+                : result === 'cashed-out'
+                  ? 'Exit receipt confirmed · no claim needed'
+                  : phase === 'loading' || result === 'won'
+                    ? 'Refreshing Event Contract state'
+                    : 'Press the big button to play again'}
         </div>
       </div>
     </div>
@@ -1618,6 +1727,13 @@ function formatMoney(value: string | null): string {
   return parsed.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 4,
+  })
+}
+
+function formatPrice(value: number): string {
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   })
 }
 

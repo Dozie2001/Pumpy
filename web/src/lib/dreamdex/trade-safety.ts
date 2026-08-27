@@ -37,6 +37,31 @@ export function filledOrderCostRaw(params: {
   }, 0n)
 }
 
+export function filledSellProceedsRaw(params: {
+  side: 'UP' | 'DOWN'
+  collateralDecimals: number
+  fills: ReadonlyArray<{ quantityFilled: bigint; fillPrice: bigint }>
+}): bigint {
+  const base = 10n ** BigInt(params.collateralDecimals)
+  return params.fills.reduce((total, fill) => {
+    const outcomePrice =
+      params.side === 'UP' ? fill.fillPrice : base - fill.fillPrice
+    return total + (fill.quantityFilled * outcomePrice) / base
+  }, 0n)
+}
+
+export function isFullCashoutQuote(params: {
+  positionRaw: bigint
+  quotedQuantityRaw: bigint
+  fillableQuantityRaw: bigint
+}): boolean {
+  return (
+    params.positionRaw > 0n &&
+    params.quotedQuantityRaw === params.positionRaw &&
+    params.fillableQuantityRaw >= params.quotedQuantityRaw
+  )
+}
+
 export function classifyPlayerOrder(params: {
   orderId: bigint | null
   requestedQuantityRaw: bigint

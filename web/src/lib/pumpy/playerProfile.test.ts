@@ -21,6 +21,7 @@ const market: PumpyEventMarket = {
   oracleQuestion: null,
   reference: 'opening-price',
   strikeRaw: '0',
+  targetPriceRaw: '8031395',
   status: 'trading',
   tradingStartsAt: 1,
   expiresAt: 2,
