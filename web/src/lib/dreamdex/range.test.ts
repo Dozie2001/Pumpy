@@ -58,7 +58,9 @@ describe('DreamDEX Range composition', () => {
     )
 
     expect(pairs).toHaveLength(2)
-    expect(pairs.map((pair) => [pair.lower.strikeRaw, pair.upper.strikeRaw])).toEqual([
+    expect(
+      pairs.map((pair) => [pair.lower.strikeRaw, pair.upper.strikeRaw]),
+    ).toEqual([
       ['7997690', '8000585'],
       ['8000585', '8010000'],
     ])
@@ -72,10 +74,11 @@ describe('DreamDEX Range composition', () => {
     const otherVenue = market('8020000', '5', {
       venueId: `0x${'ef'.repeat(32)}`,
     })
+    const unknownVenue = market('8030000', '6', { venueId: null })
 
     expect(
       selectFixedStrikeRangePairs(
-        [lower, opening, locked, closing, otherVenue],
+        [lower, opening, locked, closing, otherVenue, unknownVenue],
         'BTC',
         NOW,
       ),
@@ -89,10 +92,18 @@ describe('DreamDEX Range composition', () => {
       quantityRaw: 5n,
     }
 
-    expect(rangePayoffAtSettlement({ ...input, settlementPriceRaw: 99n })).toBe(5n)
-    expect(rangePayoffAtSettlement({ ...input, settlementPriceRaw: 100n })).toBe(10n)
-    expect(rangePayoffAtSettlement({ ...input, settlementPriceRaw: 109n })).toBe(10n)
-    expect(rangePayoffAtSettlement({ ...input, settlementPriceRaw: 110n })).toBe(5n)
+    expect(rangePayoffAtSettlement({ ...input, settlementPriceRaw: 99n })).toBe(
+      5n,
+    )
+    expect(
+      rangePayoffAtSettlement({ ...input, settlementPriceRaw: 100n }),
+    ).toBe(10n)
+    expect(
+      rangePayoffAtSettlement({ ...input, settlementPriceRaw: 109n }),
+    ).toBe(10n)
+    expect(
+      rangePayoffAtSettlement({ ...input, settlementPriceRaw: 110n }),
+    ).toBe(5n)
   })
 
   it('derives maximum loss from maximum debit rather than hiding the floor payout', () => {

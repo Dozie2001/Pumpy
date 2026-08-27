@@ -2,7 +2,10 @@ import { parseUnits } from 'viem'
 
 import { getDreamDexExchange } from './client'
 import { lcm, rangeMaximumLoss } from './range'
-import { PLAYER_QUOTE_TTL_MS, minimumMarketHeadroomSeconds } from './trade-safety'
+import {
+  PLAYER_QUOTE_TTL_MS,
+  minimumMarketHeadroomSeconds,
+} from './trade-safety'
 import type { Address } from 'viem'
 import type {
   PreparedPlayerRangeTrade,
@@ -49,7 +52,11 @@ function assertCompatiblePair(pair: PumpyRangePair): void {
     lower.collateralAddress.toLowerCase() !==
       upper.collateralAddress.toLowerCase() ||
     lower.collateralDecimals !== upper.collateralDecimals ||
-    lower.venueId !== upper.venueId ||
+    lower.venueId == null ||
+    upper.venueId == null ||
+    lower.venueId.toLowerCase() !== upper.venueId.toLowerCase() ||
+    lower.operatorId == null ||
+    upper.operatorId == null ||
     lower.operatorId !== upper.operatorId
   ) {
     throw new PlayerRangeTradeError(
@@ -165,8 +172,7 @@ export async function preparePlayerRangeTrade(params: {
       'INVALID_PAIR',
     )
   }
-  const combinedLimitPrice =
-    lowerSeed.limitPrice + upperSeed.limitPrice
+  const combinedLimitPrice = lowerSeed.limitPrice + upperSeed.limitPrice
   const affordableQuantity =
     combinedLimitPrice > 0n ? (budgetRaw * one) / combinedLimitPrice : 0n
   let quantity = minBigInt(
@@ -206,14 +212,8 @@ export async function preparePlayerRangeTrade(params: {
     )
   }
 
-  const lowerEscrow = ceilDiv(
-    quantity * lowerSeed.limitPrice,
-    one,
-  )
-  const upperEscrow = ceilDiv(
-    quantity * upperSeed.limitPrice,
-    one,
-  )
+  const lowerEscrow = ceilDiv(quantity * lowerSeed.limitPrice, one)
+  const upperEscrow = ceilDiv(quantity * upperSeed.limitPrice, one)
   const maximumCostRaw = lowerEscrow + upperEscrow
   const estimatedCostRaw = lowerBook.cost + upperBook.cost
   const walletBalanceRaw = params.account

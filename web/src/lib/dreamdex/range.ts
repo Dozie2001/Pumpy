@@ -45,6 +45,8 @@ export function selectFixedStrikeRangePairs(
     if (
       market.asset !== asset ||
       market.reference !== 'fixed-strike' ||
+      market.venueId == null ||
+      market.operatorId == null ||
       !/^\d+$/.test(market.strikeRaw) ||
       BigInt(market.strikeRaw) <= 0n ||
       !isTradingAt(market, nowSeconds)
@@ -83,12 +85,16 @@ export function selectFixedStrikeRangePairs(
   }
 
   return [...pairs].sort(
-    (left, right) =>
-      left.expiresAt - right.expiresAt ||
-      (BigInt(left.upper.strikeRaw) - BigInt(left.lower.strikeRaw) <
-      BigInt(right.upper.strikeRaw) - BigInt(right.lower.strikeRaw)
-        ? -1
-        : 1),
+    (left, right) => {
+      const expiry = left.expiresAt - right.expiresAt
+      if (expiry !== 0) return expiry
+      const leftWidth =
+        BigInt(left.upper.strikeRaw) - BigInt(left.lower.strikeRaw)
+      const rightWidth =
+        BigInt(right.upper.strikeRaw) - BigInt(right.lower.strikeRaw)
+      if (leftWidth !== rightWidth) return leftWidth < rightWidth ? -1 : 1
+      return left.lower.marketId.localeCompare(right.lower.marketId)
+    },
   )
 }
 

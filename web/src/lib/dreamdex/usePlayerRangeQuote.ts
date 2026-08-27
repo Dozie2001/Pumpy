@@ -3,10 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { watchEventMarket } from './adapter'
 import { preparePlayerRangeTrade } from './rangeTrade'
 import type { Address } from 'viem'
-import type {
-  PreparedPlayerRangeTrade,
-  PumpyRangePair,
-} from './types'
+import type { PreparedPlayerRangeTrade, PumpyRangePair } from './types'
 
 export type PlayerRangeQuoteState = {
   phase: 'idle' | 'watching' | 'loading' | 'ready' | 'error'

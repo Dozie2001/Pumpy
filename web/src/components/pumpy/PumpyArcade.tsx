@@ -85,12 +85,7 @@ import {
 import { cnm } from '@/utils/style'
 
 type ArcadeScreen =
-  | 'hub'
-  | 'lucky'
-  | 'long-shot'
-  | 'position'
-  | 'range'
-  | 'candle-hop'
+  'hub' | 'lucky' | 'long-shot' | 'position' | 'range' | 'candle-hop'
 type LuckyPhase = 'idle' | 'spinning' | 'dealt' | 'submitting' | 'error'
 type LongShotPhase = 'idle' | 'review' | 'submitting' | 'error'
 type WalletStep = 'preparing' | 'approving' | 'refreshing' | 'placing' | null
@@ -120,8 +115,8 @@ const GAMES = [
   {
     id: 'range',
     name: 'Range',
-    description: 'Stack live price bands. No funds, just score.',
-    kind: 'ARCADE',
+    description: 'Two fixed strikes. One real DreamDEX range.',
+    kind: 'LIVE',
     icon: Gamepad2,
     enabled: true,
   },
@@ -159,19 +154,18 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
   const [lastOrder, setLastOrder] = useState<PlayerOrderOutcome | null>(null)
   const [luckyHowTo, setLuckyHowTo] = useState(false)
   const [longShotTargetIndex, setLongShotTargetIndex] = useState(0)
-  const [longShotPhase, setLongShotPhase] =
-    useState<LongShotPhase>('idle')
+  const [longShotPhase, setLongShotPhase] = useState<LongShotPhase>('idle')
   const [longShotSide, setLongShotSide] = useState<PlayerSide | null>(null)
   const [longShotError, setLongShotError] = useState<string | null>(null)
   const [longShotNotice, setLongShotNotice] = useState<string | null>(null)
-  const [longShotWalletStep, setLongShotWalletStep] =
-    useState<WalletStep>(null)
+  const [longShotWalletStep, setLongShotWalletStep] = useState<WalletStep>(null)
   const [longShotRepriceAt, setLongShotRepriceAt] = useState<number | null>(
     null,
   )
   const [longShotHowTo, setLongShotHowTo] = useState(false)
-  const [longShotOrder, setLongShotOrder] =
-    useState<PlayerOrderOutcome | null>(null)
+  const [longShotOrder, setLongShotOrder] = useState<PlayerOrderOutcome | null>(
+    null,
+  )
   const spinStartedAt = useRef(0)
   const settleTimerRef = useRef<number | null>(null)
   const refreshedClaimBalance = useRef<string | null>(null)
@@ -404,7 +398,12 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     setLongShotRepriceAt(null)
     setLongShotOrder(null)
     haptic('heavy')
-  }, [livePrice.price, longShotMarket, longShotMarkets.connection, longShotTarget])
+  }, [
+    livePrice.price,
+    longShotMarket,
+    longShotMarkets.connection,
+    longShotTarget,
+  ])
 
   const cancelLongShot = useCallback(() => {
     setLongShotSide(null)
@@ -483,10 +482,7 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
         setLongShotPhase('review')
         return
       }
-      if (
-        cause instanceof PlayerTradeError &&
-        cause.code === 'STALE_QUOTE'
-      ) {
+      if (cause instanceof PlayerTradeError && cause.code === 'STALE_QUOTE') {
         haptic('warning')
         setLongShotWalletStep(null)
         setLongShotRepriceAt(longShotQuote.quote.observedAt)
@@ -680,10 +676,9 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           format: (value) => `$${STAKES[value]}`,
         },
         main: {
-          label:
-            luckyHowTo
-              ? 'HELP OPEN'
-              : luckyPhase === 'idle' && !market
+          label: luckyHowTo
+            ? 'HELP OPEN'
+            : luckyPhase === 'idle' && !market
               ? 'WAIT'
               : luckyPhase === 'idle'
                 ? 'SPIN'
@@ -941,6 +936,9 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
       <RangeArcadeGame
         asset={asset}
         livePrice={livePrice}
+        markets={markets.markets}
+        walletAddress={wallet.address}
+        walletStatus={wallet.status}
         onAsset={setAsset}
       />
     )
@@ -1397,7 +1395,9 @@ function LongShotGame({
               </div>
               <div className="mt-1 flex items-baseline gap-2">
                 <span className="text-[25px] font-black uppercase leading-none text-brand-500">
-                  {distancePct == null ? 'Syncing' : `${distancePct.toFixed(3)}%`}
+                  {distancePct == null
+                    ? 'Syncing'
+                    : `${distancePct.toFixed(3)}%`}
                 </span>
                 <span className="font-mono text-[9px] font-black uppercase tracking-[0.1em] text-text-2">
                   to target
@@ -1424,20 +1424,27 @@ function LongShotGame({
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   <Readout label="Cost" value={`$${formatMoney(premium)}`} />
                   <Readout label="Payout" value={`$${formatMoney(payout)}`} />
-                  <Readout label="Max loss" value={`$${formatMoney(premium)}`} />
+                  <Readout
+                    label="Max loss"
+                    value={`$${formatMoney(premium)}`}
+                  />
                 </div>
               ) : (
                 <div className="mt-2 flex items-center gap-2 font-mono text-[9px] font-bold uppercase text-text-3">
-                  <LoaderCircle className="h-4 w-4 animate-spin" /> Reading
-                  the fixed-strike book
+                  <LoaderCircle className="h-4 w-4 animate-spin" /> Reading the
+                  fixed-strike book
                 </div>
               )}
               <div className="mt-2.5 font-mono text-[9px] font-black uppercase tracking-[0.08em] text-brand-500">
                 {nextAction}
               </div>
               <div className="mt-1 font-mono text-[8px] uppercase leading-[1.35] tracking-[0.06em] text-text-3">
-                Wins only if {asset} settles {previewSide === 'UP' ? 'at or above' : 'below'}{' '}
-                {targetPrice == null ? 'the target' : `$${formatPrice(targetPrice)}`} · nothing is placed until you approve
+                Wins only if {asset} settles{' '}
+                {previewSide === 'UP' ? 'at or above' : 'below'}{' '}
+                {targetPrice == null
+                  ? 'the target'
+                  : `$${formatPrice(targetPrice)}`}{' '}
+                · nothing is placed until you approve
               </div>
             </>
           )}
@@ -1506,7 +1513,6 @@ function LongShotHowToRow({
         </div>
         <p className="mt-1 text-text-3">{body}</p>
       </div>
-
     </div>
   )
 }

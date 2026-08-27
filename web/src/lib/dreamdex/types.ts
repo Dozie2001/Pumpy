@@ -40,6 +40,47 @@ export type PumpyBookQuote = {
   observedAt: number
 }
 
+/** Two compatible fixed-strike Event Contracts that form one bounded payoff. */
+export type PumpyRangePair = {
+  lower: PumpyEventMarket
+  upper: PumpyEventMarket
+  expiresAt: number
+}
+
+export type PreparedRangeLeg = {
+  marketId: Hex
+  poolAddress: Address
+  orderSide: 'BUY_YES' | 'BUY_NO'
+  yesLimitPriceRaw: bigint
+  outcomeLimitPriceRaw: bigint
+  estimatedCostRaw: bigint
+  escrowRaw: bigint
+}
+
+/**
+ * A wallet-reviewable equal-share range construction: BUY_YES(lower) plus
+ * BUY_NO(upper). It is only a quote until an atomic executor submits both legs.
+ */
+export type PreparedPlayerRangeTrade = {
+  pair: PumpyRangePair
+  collateralAddress: Address
+  collateralSymbol: string
+  collateralDecimals: number
+  budgetRaw: bigint
+  quantityRaw: bigint
+  lowerLeg: PreparedRangeLeg
+  upperLeg: PreparedRangeLeg
+  estimatedCostRaw: bigint
+  maximumCostRaw: bigint
+  outsidePayoutRaw: bigint
+  insidePayoutRaw: bigint
+  maximumLossRaw: bigint
+  walletBalanceRaw: bigint | null
+  hasEnoughBalance: boolean | null
+  observedAt: number
+  validUntil: number
+}
+
 export type MarketConnection = 'indexer' | 'live' | 'stale'
 
 export type EventMarketsState = {
