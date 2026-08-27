@@ -16,10 +16,10 @@ interface MyRouterContext {
 // Social crawlers (Telegram especially) need absolute image URLs, so og:image/twitter:image point at
 // the canonical domain from config, never a relative path.
 const OG_IMAGE = `${SITE_URL}/pumpy-og.svg`
-const OG_TITLE = 'Pumpy · Player vs transparent bot'
+const OG_TITLE = 'Pumpy · Markets, made playable'
 const OG_DESC =
-  'A mobile prediction arcade where you face transparent bots on live DreamDEX Event Contracts.'
-const OG_IMAGE_ALT = 'Pumpy player-versus-bot prediction arcade'
+  'A mobile prediction arcade built on live DreamDEX Event Contracts.'
+const OG_IMAGE_ALT = 'Pumpy prediction arcade on DreamDEX'
 
 export const Route = createRootRouteWithContext<MyRouterContext>()({
   notFoundComponent: () => <NotFoundPage />,

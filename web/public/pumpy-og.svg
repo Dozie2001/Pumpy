@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Pumpy player versus transparent bot">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Pumpy prediction arcade on DreamDEX">
   <defs>
     <radialGradient id="g" cx="50%" cy="38%" r="70%">
       <stop offset="0" stop-color="#15291f"/>
@@ -21,9 +21,9 @@
     <rect x="103" y="78" width="8" height="8" rx="2" fill="#58dbff" opacity=".72"/>
   </g>
   <text x="184" y="151" fill="#f5f7fb" font-family="system-ui,sans-serif" font-size="66" font-weight="900">PUMPY</text>
-  <text x="122" y="282" fill="#f5f7fb" font-family="system-ui,sans-serif" font-size="58" font-weight="850">Beat the market.</text>
-  <text x="122" y="354" fill="#b8ff4a" font-family="system-ui,sans-serif" font-size="58" font-weight="850">Then beat the bot.</text>
-  <text x="124" y="430" fill="#b4becc" font-family="ui-monospace,monospace" font-size="24">PLAYER VS TRANSPARENT BOT · DREAMDEX · SOMNIA</text>
+  <text x="122" y="282" fill="#f5f7fb" font-family="system-ui,sans-serif" font-size="68" font-weight="850">Markets,</text>
+  <text x="122" y="362" fill="#b8ff4a" font-family="system-ui,sans-serif" font-size="68" font-weight="850">made playable.</text>
+  <text x="124" y="430" fill="#b4becc" font-family="ui-monospace,monospace" font-size="24">DREAMDEX EVENT CONTRACTS · SOMNIA</text>
   <rect x="839" y="118" width="205" height="324" rx="48" fill="#171d21" stroke="#b8ff4a" stroke-opacity=".45"/>
   <rect x="868" y="150" width="147" height="166" rx="22" fill="#07090f"/>
   <path d="M888 284l34-46 29 25 44-72" fill="none" stroke="#58dbff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>

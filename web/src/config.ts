@@ -6,7 +6,7 @@ export const SITE_URL = import.meta.env.VITE_APP_URL || 'http://localhost:3200'
 
 export const config = {
   appName: 'Pumpy',
-  tagline: 'Beat the market. Then beat the bot.',
+  tagline: 'Markets, made playable.',
   description:
     'A mobile prediction arcade powered by DreamDEX Event Contracts on Somnia.',
 

@@ -167,9 +167,60 @@
     background: rgba(255, 255, 255, 0.12);
     border-radius: 9999px;
   }
-  ::selection {
+::selection {
     background: rgba(255, 192, 22, 0.28);
     color: #fff;
+  }
+}
+
+/* The public page is intentionally flatter and quieter than the console. Its
+   only substantial movement follows a game selection; the hardware preview
+   gets a small physical hover response on pointer devices. */
+.pumpy-landing {
+  background-image:
+    linear-gradient(90deg, transparent 0, transparent calc(100% - 1px), var(--color-line) calc(100% - 1px)),
+    linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 42%, transparent), transparent 32rem);
+  background-size: min(100vw, 80rem) 100%, 100% 100%;
+  background-position: top center;
+  background-repeat: no-repeat;
+}
+
+.landing-deck {
+  transform: rotate(1deg);
+}
+
+.landing-game-enter {
+  animation: landing-game-enter 220ms var(--ease-out-quart) both;
+}
+
+@keyframes landing-game-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .landing-deck {
+    transition: transform 200ms var(--ease-out-quart);
+  }
+
+  .landing-deck:hover {
+    transform: rotate(0) translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-deck {
+    transform: none;
+  }
+
+  .landing-game-enter {
+    animation: none;
   }
 }
 

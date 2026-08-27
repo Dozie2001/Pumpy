@@ -74,7 +74,7 @@ describe("PumpyDecisionRegistry", async function () {
 
     const block = await publicClient.getBlock();
     const marketId = id("dreamdex:market:1");
-    const strategyId = id("momentum-max:v1");
+    const strategyId = id("sample-strategy:v1");
     const modelHash = id("canonical-model-payload");
     const expiresAt = block.timestamp + 3_600n;
 
@@ -113,7 +113,7 @@ describe("PumpyDecisionRegistry", async function () {
     const block = await publicClient.getBlock();
     const args = [
       id("market:duplicate"),
-      id("momentum-max:v1"),
+      id("sample-strategy:v1"),
       1,
       6_000,
       id("model:duplicate"),
@@ -127,10 +127,7 @@ describe("PumpyDecisionRegistry", async function () {
   it("rejects unauthorized, invalid, and expired decisions", async function () {
     const { publicClient, outsiderRegistry } = await deployFixture();
     const block = await publicClient.getBlock();
-    const base = [
-      id("market:invalid"),
-      id("strategy:invalid"),
-    ] as const;
+    const base = [id("market:invalid"), id("strategy:invalid")] as const;
 
     await assert.rejects(() =>
       outsiderRegistry.write.registerDecision([

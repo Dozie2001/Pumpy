@@ -1,7 +1,7 @@
 {
   "id": "/",
   "short_name": "Pumpy",
-  "name": "Pumpy — Player vs transparent bot",
+  "name": "Pumpy — Markets, made playable",
   "description": "A mobile prediction arcade powered by DreamDEX Event Contracts on Somnia.",
   "categories": ["games", "finance"],
   "icons": [

@@ -1,5 +1,4 @@
 import {
-  Activity,
   CandlestickChart,
   Clock3,
   Gamepad2,
@@ -102,7 +101,6 @@ const GAMES = [
     description: 'Spin a direction. DreamDEX sets the real odds.',
     kind: 'LIVE',
     icon: Sparkles,
-    enabled: true,
   },
   {
     id: 'long-shot',
@@ -110,7 +108,6 @@ const GAMES = [
     description: 'Hit a real fixed strike. Bigger target, live odds.',
     kind: 'LIVE',
     icon: Rocket,
-    enabled: true,
   },
   {
     id: 'range',
@@ -118,7 +115,6 @@ const GAMES = [
     description: 'Two fixed strikes. One real DreamDEX range.',
     kind: 'LIVE',
     icon: Gamepad2,
-    enabled: true,
   },
   {
     id: 'candle-hop',
@@ -126,15 +122,6 @@ const GAMES = [
     description: 'One-button arcade. No funds, just score.',
     kind: 'ARCADE',
     icon: CandlestickChart,
-    enabled: true,
-  },
-  {
-    id: 'momentum-max',
-    name: 'Momentum Max',
-    description: 'Challenge a committed onchain momentum bot.',
-    kind: 'NEXT',
-    icon: Activity,
-    enabled: false,
   },
 ] as const
 
@@ -318,10 +305,6 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
   const launchSelected = useCallback(
     (index = selectedGame) => {
       const selected = GAMES[index]
-      if (!selected.enabled) {
-        haptic('warning')
-        return
-      }
       if (
         quickCall.round &&
         (selected.id === 'lucky' || selected.id === 'long-shot')
@@ -621,10 +604,8 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           label:
             quickCall.round && selectedIsWalletGame
               ? 'RESUME'
-              : GAMES[selectedGame].enabled
-                ? 'PLAY'
-                : 'LOCKED',
-          color: GAMES[selectedGame].enabled ? 'amber' : 'neutral',
+              : 'PLAY',
+          color: 'amber',
           onPress: () => {
             if (quickCall.round && selectedIsWalletGame) go('position')
             else launchSelected()
@@ -1127,7 +1108,7 @@ function GameHub({
               data-console-tap
               onClick={() => {
                 onSelect(index)
-                if (game.enabled) onLaunch(index)
+                onLaunch(index)
               }}
               className={cnm(
                 'relative flex w-full items-center gap-3 border-b border-line-strong py-3 text-left',
@@ -1169,7 +1150,7 @@ function GameHub({
               <span
                 className={cnm(
                   'font-mono text-[9px] font-black tracking-[0.1em]',
-                  game.enabled ? 'text-up' : 'text-text-3',
+                  game.kind === 'LIVE' ? 'text-up' : 'text-pumpy-cyan',
                 )}
               >
                 {game.kind}

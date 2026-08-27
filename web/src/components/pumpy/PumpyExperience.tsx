@@ -55,14 +55,6 @@ type Rival = {
 
 const RIVALS: ReadonlyArray<Rival> = [
   {
-    name: 'Momentum Max',
-    shortName: 'MAX',
-    signal: 'Momentum',
-    description:
-      'Follows short-window price movement when the signal clears its risk threshold.',
-    accent: 'text-pumpy-cyan',
-  },
-  {
     name: 'Reversal Rita',
     shortName: 'RITA',
     signal: 'Mean reversion',
@@ -589,10 +581,10 @@ function HomeScreen({
           </div>
 
           <h1 className="mt-6 max-w-[18ch] text-[25px] font-black leading-[1.02] tracking-[-0.025em] text-text">
-            Beat the market. Then beat the bot.
+            Markets, made playable.
           </h1>
           <p className="mt-3 max-w-[36ch] text-[12px] font-medium leading-[1.55] text-text-2">
-            Make a fast market call now, or enter a transparent bot battle.
+            Make a fast BTC or ETH market call from the Pumpy console.
           </p>
 
           <div className="mt-4 grid grid-cols-2 gap-2">
