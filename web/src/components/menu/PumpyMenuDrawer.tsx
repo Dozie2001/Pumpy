@@ -68,6 +68,8 @@ export function PumpyMenuDrawer({
   const [tab, setTab] = useState<Tab>('player')
   const [profile, setProfile] = useState<PumpyPlayerProfile>(EMPTY_PROFILE)
   const [candleBest, setCandleBest] = useState(0)
+  const [rangeBest, setRangeBest] = useState(0)
+  const [rangeMaxStack, setRangeMaxStack] = useState(0)
 
   useEffect(() => {
     if (!open) return
@@ -79,6 +81,8 @@ export function PumpyMenuDrawer({
         setProfile(EMPTY_PROFILE)
       }
       setCandleBest(Number(window.localStorage.getItem('pumpy:candle-hop:best') ?? 0))
+      setRangeBest(Number(window.localStorage.getItem('pumpy:range:best') ?? 0))
+      setRangeMaxStack(Number(window.localStorage.getItem('pumpy:range:max-stack') ?? 0))
     }
     refresh()
     window.addEventListener('pumpy:profile-updated', refresh)
@@ -95,8 +99,8 @@ export function PumpyMenuDrawer({
   }, [onClose, open])
 
   const achievements = useMemo(
-    () => profileAchievements(profile, candleBest),
-    [candleBest, profile],
+    () => profileAchievements(profile, candleBest, rangeBest, rangeMaxStack),
+    [candleBest, profile, rangeBest, rangeMaxStack],
   )
   const unlocked = achievements.filter((achievement) => achievement.unlocked).length
   const volume = profile.plays.reduce(
@@ -413,7 +417,7 @@ function PortfolioPanel({
         <PortfolioNotice
           icon={CircleDollarSign}
           title="No open positions"
-          body="A filled Lucky play will appear here from DreamDEX's onchain portfolio index."
+          body="A filled Lucky or Long Shot play will appear here from DreamDEX's onchain portfolio index."
         />
       ) : null}
 
@@ -429,6 +433,7 @@ function PortfolioPanel({
                 <div className="min-w-0 flex-1">
                   <div className="text-[15px] font-black uppercase text-text">{play.asset} {play.side}</div>
                   <div className="mt-1 font-mono text-[8px] uppercase tracking-[0.08em] text-text-3">
+                    {play.game === 'long-shot' ? 'Long Shot' : 'Lucky'} ·{' '}
                     {formatActivityTime(play.submittedAt)} · {play.status}
                   </div>
                 </div>

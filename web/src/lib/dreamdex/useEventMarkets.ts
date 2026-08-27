@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { discoverEventMarkets, watchEventMarket } from './adapter'
 import {
   selectClosingPumpyMarket,
+  selectFixedStrikePumpyMarket,
   selectNextPumpyMarket,
   selectPumpyMarket,
 } from './normalize'
@@ -22,7 +23,13 @@ function errorMessage(error: unknown): string {
     : 'DreamDEX market discovery failed'
 }
 
-export function useEventMarkets(asset: string): EventMarketsState {
+export function useEventMarkets(
+  asset: string,
+  options: {
+    reference?: 'default' | 'fixed-strike'
+    selectionIndex?: number
+  } = {},
+): EventMarketsState {
   const [markets, setMarkets] = useState<Array<PumpyEventMarket>>([])
   const [phase, setPhase] = useState<EventMarketsState['phase']>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -67,8 +74,22 @@ export function useEventMarkets(asset: string): EventMarketsState {
   }, [refresh, refreshToken])
 
   const selected = useMemo(
-    () => selectPumpyMarket(markets, asset, nowSeconds),
-    [asset, markets, nowSeconds],
+    () =>
+      options.reference === 'fixed-strike'
+        ? selectFixedStrikePumpyMarket(
+            markets,
+            asset,
+            options.selectionIndex,
+            nowSeconds,
+          )
+        : selectPumpyMarket(markets, asset, nowSeconds),
+    [
+      asset,
+      markets,
+      nowSeconds,
+      options.reference,
+      options.selectionIndex,
+    ],
   )
   const closing = useMemo(
     () => selectClosingPumpyMarket(markets, asset, nowSeconds),

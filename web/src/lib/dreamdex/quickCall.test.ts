@@ -59,6 +59,19 @@ describe('Quick Call persistence and reconciliation', () => {
     expect(readQuickCallRound(storage, address)).toEqual(round)
     expect(round.filledQuantityRaw).toBe('8000000')
     expect(round.escrowRaw).toBe('4800000')
+    expect(round.game).toBe('lucky')
+  })
+
+  it('keeps the originating game for resume and result copy', () => {
+    const round = createQuickCallRound({
+      account: address,
+      game: 'long-shot',
+      market,
+      trade,
+      outcome,
+    })
+
+    expect(round.game).toBe('long-shot')
   })
 
   it('ignores malformed browser storage instead of hydrating it', () => {

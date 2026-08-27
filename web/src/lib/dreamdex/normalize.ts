@@ -105,6 +105,44 @@ export function selectPumpyMarket(
   )
 }
 
+/**
+ * Fixed-strike contracts power Long Shot. Return every safely-tradable
+ * candidate in a deterministic order so the game knob can move between live
+ * targets without guessing venue ids, pool addresses, or cadences.
+ */
+export function selectFixedStrikePumpyMarkets(
+  markets: ReadonlyArray<PumpyEventMarket>,
+  asset: string,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+): Array<PumpyEventMarket> {
+  return markets
+    .filter(
+      (market) =>
+        market.asset === asset &&
+        market.reference === 'fixed-strike' &&
+        isTradingAt(market, nowSeconds) &&
+        market.expiresAt >
+          nowSeconds + minimumMarketHeadroomSeconds(market.intervalSeconds),
+    )
+    .sort(
+      (a, b) =>
+        a.expiresAt - b.expiresAt ||
+        (b.intervalSeconds ?? 0) - (a.intervalSeconds ?? 0) ||
+        a.marketId.localeCompare(b.marketId),
+    )
+}
+
+export function selectFixedStrikePumpyMarket(
+  markets: ReadonlyArray<PumpyEventMarket>,
+  asset: string,
+  selectionIndex = 0,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+): PumpyEventMarket | null {
+  const candidates = selectFixedStrikePumpyMarkets(markets, asset, nowSeconds)
+  if (!candidates.length) return null
+  return candidates[Math.min(Math.max(0, selectionIndex), candidates.length - 1)]
+}
+
 export function selectClosingPumpyMarket(
   markets: ReadonlyArray<PumpyEventMarket>,
   asset: string,

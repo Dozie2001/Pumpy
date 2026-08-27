@@ -8,6 +8,9 @@ import type {
 } from './types'
 
 const STORAGE_PREFIX = 'pumpy:quick-call:v1'
+type StoredQuickCallRound = Omit<QuickCallRound, 'game'> & {
+  game?: QuickCallRound['game']
+}
 
 export type QuickCallChainSnapshot = {
   phase:
@@ -33,6 +36,7 @@ export function quickCallStorageKey(account: Address): string {
 
 export function createQuickCallRound(params: {
   account: Address
+  game?: QuickCallRound['game']
   market: PumpyEventMarket
   trade: PreparedPlayerTrade
   outcome: PlayerOrderOutcome
@@ -47,6 +51,7 @@ export function createQuickCallRound(params: {
   }
   return {
     version: 1,
+    game: params.game ?? 'lucky',
     account: params.account,
     marketId: params.market.marketId,
     poolAddress: params.market.poolAddress,
@@ -86,7 +91,9 @@ export function readQuickCallRound(
   if (!raw) return null
   try {
     const parsed: unknown = JSON.parse(raw)
-    return isStoredQuickCallRound(parsed, account) ? parsed : null
+    return isStoredQuickCallRound(parsed, account)
+      ? { ...parsed, game: parsed.game ?? 'lucky' }
+      : null
   } catch {
     return null
   }
@@ -95,7 +102,7 @@ export function readQuickCallRound(
 function isStoredQuickCallRound(
   value: unknown,
   account: Address,
-): value is QuickCallRound {
+): value is StoredQuickCallRound {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Record<string, unknown>
   const isAddress = (entry: unknown) =>
@@ -106,6 +113,9 @@ function isStoredQuickCallRound(
     typeof entry === 'string' && /^\d+$/.test(entry)
   return (
     candidate.version === 1 &&
+    (candidate.game === undefined ||
+      candidate.game === 'lucky' ||
+      candidate.game === 'long-shot') &&
     typeof candidate.account === 'string' &&
     candidate.account.toLowerCase() === account.toLowerCase() &&
     isAddress(candidate.account) &&

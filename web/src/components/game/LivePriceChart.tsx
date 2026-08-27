@@ -18,28 +18,39 @@ const RANGE_EASE_MS = 260
 type ChartRange = { min: number; max: number }
 type PlotPoint = { x: number; y: number }
 
+export type LivePriceRangeBand = {
+  lower: number
+  upper: number
+  status: 'active' | 'won' | 'lost' | 'void'
+  label?: string
+}
+
 export function LivePriceChart({
   state,
   className,
   eventCountdown,
   targetPrice,
   side,
+  rangeBands = [],
 }: {
   state: LiveAssetPriceState
   className?: string
   eventCountdown?: string | null
   targetPrice?: number | null
   side?: PlayerSide | null
+  rangeBands?: ReadonlyArray<LivePriceRangeBand>
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const pointsRef = useRef(state.points)
   const targetPriceRef = useRef(state.price)
   const marketTargetRef = useRef(targetPrice)
   const sideRef = useRef(side)
+  const rangeBandsRef = useRef(rangeBands)
   pointsRef.current = state.points
   targetPriceRef.current = state.price
   marketTargetRef.current = targetPrice
   sideRef.current = side
+  rangeBandsRef.current = rangeBands
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -78,6 +89,7 @@ export function LivePriceChart({
       lastFrame = now
       const liveTargetPrice = targetPriceRef.current
       const marketTarget = marketTargetRef.current
+      const liveRangeBands = rangeBandsRef.current
       const points = pointsRef.current
       const reducedMotion = window.matchMedia(
         '(prefers-reduced-motion: reduce)',
@@ -99,6 +111,11 @@ export function LivePriceChart({
       const prices = plotted.map((point) => point.price)
       if (displayedPrice > 0) prices.push(displayedPrice)
       if (marketTarget != null && marketTarget > 0) prices.push(marketTarget)
+      for (const band of liveRangeBands) {
+        if (band.lower > 0 && band.upper > band.lower) {
+          prices.push(band.lower, band.upper)
+        }
+      }
 
       if (prices.length) {
         const low = Math.min(...prices)
@@ -156,6 +173,16 @@ export function LivePriceChart({
             TOP_PAD +
             ((range.max - displayedPrice) / (range.max - range.min)) *
               plotHeight,
+        }
+
+        for (const [index, band] of liveRangeBands.entries()) {
+          const upperY =
+            TOP_PAD +
+            ((range.max - band.upper) / (range.max - range.min)) * plotHeight
+          const lowerY =
+            TOP_PAD +
+            ((range.max - band.lower) / (range.max - range.min)) * plotHeight
+          drawRangeBand(context, upperY, lowerY, width, band, index)
         }
 
         if (!chartPoints.length || chartPoints.at(-1)?.x !== tip.x)
@@ -238,6 +265,46 @@ export function LivePriceChart({
       </div>
     </div>
   )
+}
+
+function drawRangeBand(
+  context: CanvasRenderingContext2D,
+  upperY: number,
+  lowerY: number,
+  width: number,
+  band: LivePriceRangeBand,
+  index: number,
+) {
+  const color =
+    band.status === 'won'
+      ? '52, 211, 153'
+      : band.status === 'lost'
+        ? '255, 107, 116'
+        : band.status === 'void'
+          ? '255, 200, 87'
+          : '184, 255, 74'
+  const top = Math.min(upperY, lowerY)
+  const height = Math.max(2, Math.abs(lowerY - upperY))
+
+  context.save()
+  context.fillStyle = `rgba(${color}, ${band.status === 'active' ? 0.09 : 0.16})`
+  context.fillRect(0, top, width, height)
+  context.setLineDash([4, 4])
+  context.strokeStyle = `rgba(${color}, 0.68)`
+  context.lineWidth = 1
+  for (const y of [top, top + height]) {
+    context.beginPath()
+    context.moveTo(0, y)
+    context.lineTo(width, y)
+    context.stroke()
+  }
+  context.setLineDash([])
+  if (band.label) {
+    context.font = '700 8px ui-monospace, SFMono-Regular, monospace'
+    context.fillStyle = `rgb(${color})`
+    context.fillText(band.label, 7 + index * 34, Math.max(11, top + 10))
+  }
+  context.restore()
 }
 
 function drawMarketTarget(

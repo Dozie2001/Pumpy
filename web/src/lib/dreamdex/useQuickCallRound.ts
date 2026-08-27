@@ -125,6 +125,7 @@ export function useQuickCallRound(params: {
 
   const recordOrder = useCallback(
     (input: {
+      game?: QuickCallRound['game']
       market: PumpyEventMarket
       trade: PreparedPlayerTrade
       outcome: PlayerOrderOutcome

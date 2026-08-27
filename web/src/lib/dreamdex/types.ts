@@ -78,6 +78,8 @@ export type PlayerWalletState = {
 
 export type PlayerSide = 'UP' | 'DOWN'
 
+export type PumpyPlayerGame = 'lucky' | 'long-shot'
+
 export type PumpyGameMode = 'quick-call' | 'bot-battle'
 
 export type PreparedPlayerTrade = {
@@ -136,6 +138,7 @@ export type PlayerCashoutOutcome = {
 
 export type QuickCallRound = {
   version: 1
+  game: PumpyPlayerGame
   account: Address
   marketId: Hex
   poolAddress: Address

@@ -4,6 +4,7 @@ import {
   Clock3,
   Gamepad2,
   LoaderCircle,
+  Rocket,
   Sparkles,
   WalletCards,
 } from 'lucide-react'
@@ -27,6 +28,7 @@ import { GameSettlementScreen } from '@/components/game/GameSettlementScreen'
 import { LivePrice } from '@/components/game/LivePrice'
 import { LivePriceChart } from '@/components/game/LivePriceChart'
 import { LuckyWheels } from '@/components/game/LuckyWheels'
+import { RangeArcadeGame } from '@/components/game/RangeArcadeGame'
 import {
   GameReadout,
   GameScreen,
@@ -34,6 +36,7 @@ import {
   SCREEN_STATES,
   ScreenCRT,
   ScreenMessage,
+  ScreenOverlay,
 } from '@/components/game/screen'
 import { TestCollateralCard } from '@/components/pumpy/PumpyExperience'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
@@ -43,7 +46,12 @@ import {
   isCallCurrentlyWinning,
   resolveOracleTargetPrice,
 } from '@/lib/dreamdex/oracleTarget'
+import { selectFixedStrikePumpyMarkets } from '@/lib/dreamdex/normalize'
 import { usePlayerCashout } from '@/lib/dreamdex/usePlayerCashout'
+import {
+  longShotDistancePercent,
+  longShotSideForTarget,
+} from '@/lib/dreamdex/longShot'
 import { usePlayerQuote } from '@/lib/dreamdex/usePlayerQuote'
 import { usePlayerWallet } from '@/lib/dreamdex/usePlayerWallet'
 import { useQuickCallRound } from '@/lib/dreamdex/useQuickCallRound'
@@ -64,6 +72,10 @@ import {
   luckyCashout,
   luckyLose,
   luckyWin,
+  moonshotCashout,
+  moonshotFire,
+  moonshotLose,
+  moonshotWin,
   slotPick,
   slotSpin,
   sound,
@@ -72,8 +84,15 @@ import {
 } from '@/lib/sound'
 import { cnm } from '@/utils/style'
 
-type ArcadeScreen = 'hub' | 'lucky' | 'position' | 'candle-hop'
+type ArcadeScreen =
+  | 'hub'
+  | 'lucky'
+  | 'long-shot'
+  | 'position'
+  | 'range'
+  | 'candle-hop'
 type LuckyPhase = 'idle' | 'spinning' | 'dealt' | 'submitting' | 'error'
+type LongShotPhase = 'idle' | 'review' | 'submitting' | 'error'
 type WalletStep = 'preparing' | 'approving' | 'refreshing' | 'placing' | null
 
 const STAKES = [1, 5, 10, 25, 50] as const
@@ -91,6 +110,22 @@ const GAMES = [
     enabled: true,
   },
   {
+    id: 'long-shot',
+    name: 'Long Shot',
+    description: 'Hit a real fixed strike. Bigger target, live odds.',
+    kind: 'LIVE',
+    icon: Rocket,
+    enabled: true,
+  },
+  {
+    id: 'range',
+    name: 'Range',
+    description: 'Stack live price bands. No funds, just score.',
+    kind: 'ARCADE',
+    icon: Gamepad2,
+    enabled: true,
+  },
+  {
     id: 'candle-hop',
     name: 'Candle Hop',
     description: 'One-button arcade. No funds, just score.',
@@ -99,19 +134,11 @@ const GAMES = [
     enabled: true,
   },
   {
-    id: 'line-rider',
-    name: 'Line Rider',
-    description: 'Ride the market line with the big wheel.',
+    id: 'momentum-max',
+    name: 'Momentum Max',
+    description: 'Challenge a committed onchain momentum bot.',
     kind: 'NEXT',
     icon: Activity,
-    enabled: false,
-  },
-  {
-    id: 'range',
-    name: 'Range',
-    description: 'Binary composition under protocol review.',
-    kind: 'LAB',
-    icon: Gamepad2,
     enabled: false,
   },
 ] as const
@@ -130,11 +157,30 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     number | null
   >(null)
   const [lastOrder, setLastOrder] = useState<PlayerOrderOutcome | null>(null)
+  const [luckyHowTo, setLuckyHowTo] = useState(false)
+  const [longShotTargetIndex, setLongShotTargetIndex] = useState(0)
+  const [longShotPhase, setLongShotPhase] =
+    useState<LongShotPhase>('idle')
+  const [longShotSide, setLongShotSide] = useState<PlayerSide | null>(null)
+  const [longShotError, setLongShotError] = useState<string | null>(null)
+  const [longShotNotice, setLongShotNotice] = useState<string | null>(null)
+  const [longShotWalletStep, setLongShotWalletStep] =
+    useState<WalletStep>(null)
+  const [longShotRepriceAt, setLongShotRepriceAt] = useState<number | null>(
+    null,
+  )
+  const [longShotHowTo, setLongShotHowTo] = useState(false)
+  const [longShotOrder, setLongShotOrder] =
+    useState<PlayerOrderOutcome | null>(null)
   const spinStartedAt = useRef(0)
   const settleTimerRef = useRef<number | null>(null)
   const refreshedClaimBalance = useRef<string | null>(null)
 
   const markets = useEventMarkets(asset)
+  const longShotMarkets = useEventMarkets(asset, {
+    reference: 'fixed-strike',
+    selectionIndex: longShotTargetIndex,
+  })
   const livePrice = useLiveAssetPrice(asset)
   const wallet = usePlayerWallet()
   const market = markets.selected
@@ -157,6 +203,28 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     account: wallet.address,
     enabled: luckyPhase === 'spinning' || luckyPhase === 'dealt',
   })
+  const longShotMarket = longShotMarkets.selected
+  const longShotCollateral = useTestCollateral({
+    market: longShotMarket,
+    wallet,
+  })
+  const longShotCandidates = useMemo(
+    () => selectFixedStrikePumpyMarkets(longShotMarkets.markets, asset),
+    [asset, longShotMarkets.markets],
+  )
+  const longShotTarget = resolveOracleTargetPrice(
+    longShotMarket?.targetPriceRaw,
+    livePrice.price,
+  )?.price
+  const longShotQuote = usePlayerQuote({
+    market: longShotMarket,
+    side: longShotSide,
+    stake,
+    account: wallet.address,
+    enabled:
+      screen === 'long-shot' &&
+      (longShotPhase === 'review' || longShotPhase === 'submitting'),
+  })
   const multiplier = quote.quote ? quoteMultiplier(quote.quote) : undefined
 
   useEffect(() => {
@@ -164,7 +232,8 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     if (!claimHash || refreshedClaimBalance.current === claimHash) return
     refreshedClaimBalance.current = claimHash
     void testCollateral.refresh()
-  }, [quickCall.round?.claimHash, testCollateral])
+    void longShotCollateral.refresh()
+  }, [quickCall.round?.claimHash, longShotCollateral, testCollateral])
 
   const go = useCallback((next: ArcadeScreen) => {
     haptic('selection')
@@ -209,6 +278,21 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
   }, [market?.marketId])
 
   useEffect(() => {
+    setLongShotPhase('idle')
+    setLongShotSide(null)
+    setLongShotError(null)
+    setLongShotNotice(null)
+    setLongShotWalletStep(null)
+    setLongShotRepriceAt(null)
+    setLongShotOrder(null)
+  }, [longShotMarket?.marketId])
+
+  useEffect(() => {
+    if (longShotTargetIndex < longShotCandidates.length) return
+    setLongShotTargetIndex(Math.max(0, longShotCandidates.length - 1))
+  }, [longShotCandidates.length, longShotTargetIndex])
+
+  useEffect(() => {
     if (
       repriceFromObservedAt === null ||
       quote.phase !== 'ready' ||
@@ -223,6 +307,20 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     )
   }, [quote.phase, quote.quote, repriceFromObservedAt])
 
+  useEffect(() => {
+    if (
+      longShotRepriceAt === null ||
+      longShotQuote.phase !== 'ready' ||
+      !longShotQuote.quote ||
+      longShotQuote.quote.observedAt <= longShotRepriceAt
+    )
+      return
+    setLongShotRepriceAt(null)
+    setLongShotNotice(
+      'Odds changed. Updated terms are shown — press LOCK IN again.',
+    )
+  }, [longShotQuote.phase, longShotQuote.quote, longShotRepriceAt])
+
   const launchSelected = useCallback(
     (index = selectedGame) => {
       const selected = GAMES[index]
@@ -230,10 +328,19 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
         haptic('warning')
         return
       }
+      if (
+        quickCall.round &&
+        (selected.id === 'lucky' || selected.id === 'long-shot')
+      ) {
+        go('position')
+        return
+      }
       if (selected.id === 'lucky') go('lucky')
+      if (selected.id === 'long-shot') go('long-shot')
+      if (selected.id === 'range') go('range')
       if (selected.id === 'candle-hop') go('candle-hop')
     },
-    [go, selectedGame],
+    [go, quickCall.round, selectedGame],
   )
 
   const spin = useCallback(() => {
@@ -263,6 +370,8 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
   }, [])
 
   const playAgain = useCallback(() => {
+    const nextScreen =
+      quickCall.round?.game === 'long-shot' ? 'long-shot' : 'lucky'
     quickCall.clear()
     setSide(null)
     setLuckyPhase('idle')
@@ -270,8 +379,139 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     setQuoteNotice(null)
     setWalletStep(null)
     setLastOrder(null)
-    go('lucky')
+    setLongShotPhase('idle')
+    setLongShotSide(null)
+    setLongShotError(null)
+    setLongShotNotice(null)
+    go(nextScreen)
   }, [go, quickCall])
+
+  const reviewLongShot = useCallback(() => {
+    if (
+      !longShotMarket ||
+      longShotTarget == null ||
+      livePrice.price == null ||
+      longShotMarkets.connection !== 'live'
+    ) {
+      haptic('warning')
+      return
+    }
+    setLongShotSide(longShotSideForTarget(livePrice.price, longShotTarget))
+    setLongShotPhase('review')
+    setLongShotError(null)
+    setLongShotNotice(null)
+    setLongShotWalletStep(null)
+    setLongShotRepriceAt(null)
+    setLongShotOrder(null)
+    haptic('heavy')
+  }, [livePrice.price, longShotMarket, longShotMarkets.connection, longShotTarget])
+
+  const cancelLongShot = useCallback(() => {
+    setLongShotSide(null)
+    setLongShotPhase('idle')
+    setLongShotError(null)
+    setLongShotNotice(null)
+    setLongShotWalletStep(null)
+    setLongShotRepriceAt(null)
+    setLongShotOrder(null)
+  }, [])
+
+  const submitLongShot = useCallback(async () => {
+    if (wallet.status === 'wrong-network') {
+      await wallet.switchNetwork()
+      return
+    }
+    if (wallet.status !== 'connected' || !wallet.session) {
+      await wallet.connect()
+      return
+    }
+    if (
+      !longShotMarket ||
+      !longShotQuote.quote ||
+      !longShotSide ||
+      longShotPhase !== 'review'
+    ) {
+      longShotQuote.refresh()
+      return
+    }
+
+    setLongShotPhase('submitting')
+    setLongShotError(null)
+    setLongShotNotice(null)
+    setLongShotWalletStep('preparing')
+    try {
+      const outcome = await placePreparedPlayerTrade({
+        trade: longShotQuote.quote,
+        market: longShotMarket,
+        wallet: wallet.session,
+        mode: 'quick-call',
+        onWalletStep: setLongShotWalletStep,
+      })
+      setLongShotWalletStep(null)
+      setLongShotOrder(outcome)
+      if (outcome.status === 'filled' || outcome.status === 'partial') {
+        quickCall.recordOrder({
+          game: 'long-shot',
+          market: longShotMarket,
+          trade: longShotQuote.quote,
+          outcome,
+        })
+        recordPlayerTrade({
+          storage: window.localStorage,
+          account: wallet.address!,
+          game: 'long-shot',
+          market: longShotMarket,
+          trade: longShotQuote.quote,
+          outcome,
+        })
+        void longShotCollateral.refresh()
+        moonshotFire()
+        haptic('success')
+        go('position')
+      } else {
+        haptic('warning')
+        setLongShotError(
+          outcome.status === 'open'
+            ? 'The remainder is resting on DreamDEX. Review it before retrying.'
+            : 'The fixed-strike IOC did not fill. Choose a fresh target.',
+        )
+        setLongShotPhase('error')
+      }
+    } catch (cause) {
+      if (isWalletRejection(cause)) {
+        setLongShotWalletStep(null)
+        setLongShotPhase('review')
+        return
+      }
+      if (
+        cause instanceof PlayerTradeError &&
+        cause.code === 'STALE_QUOTE'
+      ) {
+        haptic('warning')
+        setLongShotWalletStep(null)
+        setLongShotRepriceAt(longShotQuote.quote.observedAt)
+        setLongShotNotice(`${cause.message} Refreshing executable terms…`)
+        setLongShotPhase('review')
+        longShotQuote.refresh()
+        return
+      }
+      setLongShotWalletStep(null)
+      haptic('warning')
+      setLongShotError(
+        cause instanceof Error ? cause.message : 'The order did not complete',
+      )
+      setLongShotPhase('error')
+    }
+  }, [
+    go,
+    longShotMarket,
+    longShotPhase,
+    longShotQuote,
+    longShotSide,
+    quickCall,
+    longShotCollateral,
+    wallet,
+  ])
 
   const submit = useCallback(async () => {
     if (wallet.status === 'wrong-network') {
@@ -359,6 +599,7 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
 
   const controls = useMemo<ConsoleControls>(() => {
     if (screen === 'hub') {
+      const selectedIsWalletGame = selectedGame === 0 || selectedGame === 1
       return {
         action1: {
           label: 'PREV',
@@ -382,14 +623,14 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
         },
         main: {
           label:
-            quickCall.round && selectedGame === 0
+            quickCall.round && selectedIsWalletGame
               ? 'RESUME'
               : GAMES[selectedGame].enabled
                 ? 'PLAY'
                 : 'LOCKED',
           color: GAMES[selectedGame].enabled ? 'amber' : 'neutral',
           onPress: () => {
-            if (quickCall.round && selectedGame === 0) go('position')
+            if (quickCall.round && selectedIsWalletGame) go('position')
             else launchSelected()
           },
         },
@@ -407,9 +648,17 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
         repriceFromObservedAt === null
       return {
         action1: {
-          label: luckyPhase === 'idle' ? 'HOME' : 'REROLL',
+          label: luckyHowTo
+            ? 'CLOSE'
+            : luckyPhase === 'idle'
+              ? 'HOW TO'
+              : 'REROLL',
           color: 'neutral',
-          onPress: () => (luckyPhase === 'idle' ? go('hub') : reroll()),
+          onPress: () => {
+            if (luckyHowTo) setLuckyHowTo(false)
+            else if (luckyPhase === 'idle') setLuckyHowTo(true)
+            else reroll()
+          },
         },
         action2: {
           label: asset,
@@ -432,7 +681,9 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
         },
         main: {
           label:
-            luckyPhase === 'idle' && !market
+            luckyHowTo
+              ? 'HELP OPEN'
+              : luckyPhase === 'idle' && !market
               ? 'WAIT'
               : luckyPhase === 'idle'
                 ? 'SPIN'
@@ -456,7 +707,8 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           color: luckyPhase === 'dealt' ? 'up' : 'amber',
           loading: luckyPhase === 'spinning' || luckyPhase === 'submitting',
           onPress: () => {
-            if (luckyPhase === 'idle' && !market) haptic('warning')
+            if (luckyHowTo) haptic('warning')
+            else if (luckyPhase === 'idle' && !market) haptic('warning')
             else if (luckyPhase === 'idle') spin()
             else if (luckyPhase === 'error') reroll()
             else if (luckyPhase === 'dealt') void submit()
@@ -465,6 +717,114 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
         status: {
           left: 'I FEEL LUCKY',
           right: luckyPhase.toUpperCase(),
+        },
+      }
+    }
+
+    if (screen === 'long-shot') {
+      const ready =
+        longShotPhase === 'review' &&
+        longShotQuote.phase === 'ready' &&
+        longShotRepriceAt === null
+      return {
+        action1: {
+          label: longShotHowTo
+            ? 'CLOSE'
+            : longShotPhase === 'idle'
+              ? 'HOW TO'
+              : 'CANCEL',
+          color: 'neutral',
+          onPress: () => {
+            if (longShotHowTo) setLongShotHowTo(false)
+            else if (longShotPhase === 'idle') setLongShotHowTo(true)
+            else cancelLongShot()
+          },
+        },
+        action2: {
+          label: asset,
+          color: 'neutral',
+          display: {
+            mode: 'token',
+            ticker: asset,
+            logoSrc: `/assets/images/coins/${asset.toLowerCase()}-logo.png`,
+          },
+          onPress: () => {
+            if (longShotPhase !== 'idle') {
+              haptic('warning')
+              return
+            }
+            setLongShotTargetIndex(0)
+            setAsset((value) => (value === 'BTC' ? 'ETH' : 'BTC'))
+          },
+        },
+        knob: {
+          label: 'TARGET',
+          min: 0,
+          max: Math.max(0, longShotCandidates.length - 1),
+          step: 1,
+          value: Math.max(
+            0,
+            longShotCandidates.length - 1 - longShotTargetIndex,
+          ),
+          onChange: (value) => {
+            if (longShotPhase !== 'idle') return
+            setLongShotTargetIndex(
+              Math.max(0, longShotCandidates.length - 1 - value),
+            )
+          },
+          format: (value) =>
+            longShotCandidates.length
+              ? `${longShotCandidates.length - value}/${longShotCandidates.length}`
+              : 'NONE',
+        },
+        numberWheel: {
+          label: longShotMarket?.collateralSymbol.toUpperCase() ?? 'AMOUNT',
+          min: 0,
+          max: STAKES.length - 1,
+          step: 1,
+          value: stakeIndex,
+          onChange: setStakeIndex,
+          format: (value) => `$${STAKES[value]}`,
+        },
+        main: {
+          label: longShotHowTo
+            ? 'HELP OPEN'
+            : longShotPhase === 'idle'
+              ? longShotMarket
+                ? 'REVIEW'
+                : 'WAIT'
+              : longShotPhase === 'submitting'
+                ? longShotWalletStep === 'approving'
+                  ? 'APPROVE'
+                  : longShotWalletStep === 'placing'
+                    ? 'SIGN ORDER'
+                    : 'CHECKING'
+                : wallet.status === 'wrong-network'
+                  ? 'SWITCH'
+                  : wallet.status !== 'connected'
+                    ? 'CONNECT'
+                    : ready
+                      ? 'LOCK IN'
+                      : longShotPhase === 'error'
+                        ? 'TRY AGAIN'
+                        : 'QUOTING',
+          color:
+            ready && !longShotHowTo
+              ? 'up'
+              : longShotMarket && !longShotHowTo
+                ? 'amber'
+                : 'neutral',
+          loading: longShotPhase === 'submitting',
+          onPress: () => {
+            if (longShotHowTo) haptic('warning')
+            else if (longShotPhase === 'idle') reviewLongShot()
+            else if (longShotPhase === 'error') cancelLongShot()
+            else if (longShotPhase === 'review') void submitLongShot()
+          },
+        },
+        status: {
+          left: 'LONG SHOT',
+          right: longShotPhase.toUpperCase(),
         },
       }
     }
@@ -542,18 +902,30 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     asset,
     go,
     launchSelected,
+    cancelLongShot,
+    longShotCandidates.length,
+    longShotHowTo,
+    longShotMarket,
+    longShotPhase,
+    longShotQuote.phase,
+    longShotRepriceAt,
+    longShotTargetIndex,
+    longShotWalletStep,
     luckyPhase,
+    luckyHowTo,
     market,
     markets.connection,
     quickCall,
     quote.phase,
     repriceFromObservedAt,
     reroll,
+    reviewLongShot,
     screen,
     selectedGame,
     spin,
     stakeIndex,
     submit,
+    submitLongShot,
     cashout,
     walletStep,
     wallet.status,
@@ -563,6 +935,15 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
 
   if (screen === 'candle-hop') {
     return <CandleHop onExit={() => go('hub')} />
+  }
+  if (screen === 'range') {
+    return (
+      <RangeArcadeGame
+        asset={asset}
+        livePrice={livePrice}
+        onAsset={setAsset}
+      />
+    )
   }
 
   return (
@@ -608,6 +989,33 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           quoteNotice={quoteNotice}
           repricePending={repriceFromObservedAt !== null}
           order={lastOrder}
+          howToOpen={luckyHowTo}
+        />
+      )}
+      {screen === 'long-shot' && (
+        <LongShotGame
+          asset={asset}
+          market={longShotMarket}
+          marketPhase={longShotMarkets.phase}
+          connection={longShotMarkets.connection}
+          targetIndex={longShotTargetIndex}
+          targetCount={longShotCandidates.length}
+          targetPrice={longShotTarget}
+          phase={longShotPhase}
+          side={longShotSide}
+          stake={stake}
+          quote={longShotQuote.quote}
+          quotePhase={longShotQuote.phase}
+          quoteError={longShotQuote.error}
+          livePrice={livePrice}
+          collateral={longShotCollateral}
+          walletStatus={wallet.status}
+          walletStep={longShotWalletStep}
+          orderError={longShotError}
+          quoteNotice={longShotNotice}
+          repricePending={longShotRepriceAt !== null}
+          order={longShotOrder}
+          howToOpen={longShotHowTo}
         />
       )}
       {screen === 'position' && quickCall.round && (
@@ -810,6 +1218,299 @@ function GameHub({
   )
 }
 
+function LongShotGame({
+  asset,
+  market,
+  marketPhase,
+  connection,
+  targetIndex,
+  targetCount,
+  targetPrice,
+  phase,
+  side,
+  stake,
+  quote,
+  quotePhase,
+  quoteError,
+  livePrice,
+  collateral,
+  walletStatus,
+  walletStep,
+  orderError,
+  quoteNotice,
+  repricePending,
+  order,
+  howToOpen,
+}: {
+  asset: string
+  market: PumpyEventMarket | null
+  marketPhase: string
+  connection: string
+  targetIndex: number
+  targetCount: number
+  targetPrice: number | null | undefined
+  phase: LongShotPhase
+  side: PlayerSide | null
+  stake: number
+  quote: PreparedPlayerTrade | null
+  quotePhase: string
+  quoteError: string | null
+  livePrice: LiveAssetPriceState
+  collateral: ReturnType<typeof useTestCollateral>
+  walletStatus: ReturnType<typeof usePlayerWallet>['status']
+  walletStep: WalletStep
+  orderError: string | null
+  quoteNotice: string | null
+  repricePending: boolean
+  order: PlayerOrderOutcome | null
+  howToOpen: boolean
+}) {
+  const secondsLeft = useEventSeconds(market?.expiresAt ?? null)
+  if (marketPhase === 'loading') {
+    return (
+      <ScreenMessage
+        title="Loading targets"
+        body="Finding live fixed-strike DreamDEX Event Contracts."
+        hint="Syncing"
+      />
+    )
+  }
+  if (!market) {
+    return (
+      <ScreenMessage
+        title="No Long Shot target"
+        body={`DreamDEX has no safely tradable fixed-strike ${asset} contract right now. Nothing was charged.`}
+        hint="Watching for the next target"
+      />
+    )
+  }
+
+  const available = collateral.snapshot
+    ? formatUnits(collateral.snapshot.balanceRaw, collateral.snapshot.decimals)
+    : null
+  const premium = quote
+    ? formatUnits(quote.escrowRaw, quote.collateralDecimals)
+    : null
+  const payout = quote
+    ? formatUnits(quote.quantityRaw, quote.collateralDecimals)
+    : null
+  const previewSide =
+    side ??
+    (targetPrice != null && livePrice.price != null
+      ? longShotSideForTarget(livePrice.price, targetPrice)
+      : null)
+  const distancePct =
+    targetPrice != null && livePrice.price != null
+      ? longShotDistancePercent(livePrice.price, targetPrice)
+      : null
+  const reviewing =
+    phase === 'review' || phase === 'submitting' || phase === 'error'
+  const nextAction =
+    phase === 'submitting'
+      ? walletStep === 'approving'
+        ? `Approve ${market.collateralSymbol} in your wallet`
+        : walletStep === 'placing'
+          ? 'Confirm the fixed-strike order in your wallet'
+          : walletStep === 'refreshing'
+            ? 'Rechecking the target after approval'
+            : 'Checking the final live terms'
+      : repricePending || quotePhase === 'loading'
+        ? 'Refreshing executable odds'
+        : walletStatus === 'wrong-network'
+          ? 'Press SWITCH to use Shannon'
+          : walletStatus !== 'connected'
+            ? 'Press CONNECT to continue'
+            : 'Press LOCK IN to sign'
+
+  return (
+    <div className="relative flex h-full flex-col">
+      <div
+        className={cnm(
+          'flex shrink-0 items-start justify-between gap-3 bg-black pb-2.5',
+          RIM,
+          RIM_TOP,
+        )}
+      >
+        <div className="min-w-0">
+          <div className="font-mono text-[9px] font-black uppercase tracking-[0.16em] text-text-3">
+            Long Shot · {asset} / USD
+          </div>
+          <div className="mt-0.5 overflow-hidden text-[34px] font-black leading-none text-text tabular-nums">
+            <LivePrice price={livePrice.price} />
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
+            Available
+          </div>
+          <div className="mt-0.5 text-[20px] font-black leading-none text-text-2 tabular-nums">
+            {available == null ? '—' : `$${formatMoney(available)}`}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex h-[68px] shrink-0 items-center justify-center gap-8 border-y border-line-strong bg-black px-[var(--screen-rim,24px)]">
+        <div className="text-center">
+          <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
+            Target {targetCount ? `${targetIndex + 1}/${targetCount}` : ''}
+          </div>
+          <div className="mt-1 text-[24px] font-black leading-none text-brand-500 tabular-nums">
+            {targetPrice == null ? 'Syncing' : `$${formatPrice(targetPrice)}`}
+          </div>
+        </div>
+        <div className="h-9 w-px bg-line-strong" />
+        <div className="text-center">
+          <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
+            Call
+          </div>
+          <div
+            className={cnm(
+              'mt-1 text-[24px] font-black leading-none',
+              previewSide === 'UP' ? 'text-up' : 'text-down',
+            )}
+          >
+            {previewSide === 'UP' ? '▲ REACH UP' : '▼ REACH DOWN'}
+          </div>
+        </div>
+      </div>
+
+      <LivePriceChart
+        state={livePrice}
+        className="min-h-0 flex-1"
+        eventCountdown={secondsLeft == null ? null : String(secondsLeft)}
+        targetPrice={targetPrice}
+        side={previewSide}
+      />
+
+      <div
+        className={cnm(
+          'min-h-[var(--screen-notch,21%)] shrink-0 border-t border-line-strong bg-black pt-3.5',
+          RIM,
+          RIM_BOTTOM,
+        )}
+      >
+        <div className="max-w-[62%]">
+          {!reviewing ? (
+            <>
+              <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
+                Fixed-strike contract
+              </div>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-[25px] font-black uppercase leading-none text-brand-500">
+                  {distancePct == null ? 'Syncing' : `${distancePct.toFixed(3)}%`}
+                </span>
+                <span className="font-mono text-[9px] font-black uppercase tracking-[0.1em] text-text-2">
+                  to target
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <Readout label="Amount" value={`$${stake}`} />
+                <Readout
+                  label="Ends"
+                  value={secondsLeft == null ? '—' : `${secondsLeft}s`}
+                />
+                <Readout label="Book" value={connection.toUpperCase()} />
+              </div>
+              <div className="mt-2 font-mono text-[8px] uppercase leading-[1.4] tracking-[0.06em] text-text-3">
+                Turn TARGET to choose a listed strike, then press REVIEW.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
+                Wallet-signed play · quote {quotePhase}
+              </div>
+              {quote ? (
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  <Readout label="Cost" value={`$${formatMoney(premium)}`} />
+                  <Readout label="Payout" value={`$${formatMoney(payout)}`} />
+                  <Readout label="Max loss" value={`$${formatMoney(premium)}`} />
+                </div>
+              ) : (
+                <div className="mt-2 flex items-center gap-2 font-mono text-[9px] font-bold uppercase text-text-3">
+                  <LoaderCircle className="h-4 w-4 animate-spin" /> Reading
+                  the fixed-strike book
+                </div>
+              )}
+              <div className="mt-2.5 font-mono text-[9px] font-black uppercase tracking-[0.08em] text-brand-500">
+                {nextAction}
+              </div>
+              <div className="mt-1 font-mono text-[8px] uppercase leading-[1.35] tracking-[0.06em] text-text-3">
+                Wins only if {asset} settles {previewSide === 'UP' ? 'at or above' : 'below'}{' '}
+                {targetPrice == null ? 'the target' : `$${formatPrice(targetPrice)}`} · nothing is placed until you approve
+              </div>
+            </>
+          )}
+          {(orderError || quoteError) && (
+            <div className="mt-2 border-l-2 border-down pl-2 font-mono text-[8px] uppercase leading-[1.4] text-down">
+              {orderError ?? quoteError}
+              {order?.hash ? ` · ${shortId(order.hash)}` : ''}
+            </div>
+          )}
+          {quoteNotice && !orderError && !quoteError && (
+            <div
+              className="mt-2 border-l-2 border-pumpy-caution pl-2 font-mono text-[8px] font-black uppercase leading-[1.4] text-pumpy-caution"
+              role="status"
+            >
+              {quoteNotice}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {howToOpen && (
+        <ScreenOverlay title="How to play" subtitle="Long Shot · real trade">
+          <div className="space-y-4 font-mono text-[11px] font-semibold leading-[1.5] text-text-2">
+            <LongShotHowToRow
+              step="01"
+              title="Choose a target"
+              body="Turn the big TARGET wheel. Every line is a live fixed-strike DreamDEX Event Contract."
+            />
+            <LongShotHowToRow
+              step="02"
+              title="Review the reach"
+              body="Pumpy calls the side that must cross the strike. Review the exact cost, payout, maximum loss, and expiry."
+            />
+            <LongShotHowToRow
+              step="03"
+              title="Lock it in"
+              body="Your wallet approves collateral if needed, then signs its own IOC order. The bot never touches your funds."
+            />
+            <LongShotHowToRow
+              step="04"
+              title="Exit or settle"
+              body="Cash out against the live book before lock, or hold for DreamDEX resolution and claim a winning payout."
+            />
+          </div>
+        </ScreenOverlay>
+      )}
+    </div>
+  )
+}
+
+function LongShotHowToRow({
+  step,
+  title,
+  body,
+}: {
+  step: string
+  title: string
+  body: string
+}) {
+  return (
+    <div className="grid grid-cols-[28px_1fr] gap-3 border-t border-line-strong pt-3 first:border-t-0 first:pt-0">
+      <span className="text-brand-500">{step}</span>
+      <div>
+        <div className="font-black uppercase tracking-[0.1em] text-text">
+          {title}
+        </div>
+        <p className="mt-1 text-text-3">{body}</p>
+      </div>
+
+    </div>
+  )
+}
+
 function LuckyGame({
   asset,
   market,
@@ -831,6 +1532,7 @@ function LuckyGame({
   quoteNotice,
   repricePending,
   order,
+  howToOpen,
 }: {
   asset: string
   market: PumpyEventMarket | null
@@ -852,6 +1554,7 @@ function LuckyGame({
   quoteNotice: string | null
   repricePending: boolean
   order: PlayerOrderOutcome | null
+  howToOpen: boolean
 }) {
   const nextStartsIn = useEventSeconds(nextMarket?.tradingStartsAt ?? null)
 
@@ -1082,6 +1785,33 @@ function LuckyGame({
           )}
         </div>
       </div>
+
+      {howToOpen && (
+        <ScreenOverlay title="How to play" subtitle="I Feel Lucky · real trade">
+          <div className="space-y-4 font-mono text-[11px] font-semibold leading-[1.5] text-text-2">
+            <LongShotHowToRow
+              step="01"
+              title="Set the amount"
+              body="Use the number wheel to choose how much test collateral to put at risk."
+            />
+            <LongShotHowToRow
+              step="02"
+              title="Spin"
+              body="Pumpy transparently deals UP or DOWN, then reads the executable odds from DreamDEX."
+            />
+            <LongShotHowToRow
+              step="03"
+              title="Review and lock"
+              body="Check cost, potential payout, maximum loss, target, and expiry before your wallet signs."
+            />
+            <LongShotHowToRow
+              step="04"
+              title="Exit or claim"
+              body="Cash out against the live book before lock, or wait for the onchain result and claim a win."
+            />
+          </div>
+        </ScreenOverlay>
+      )}
     </div>
   )
 }
@@ -1104,6 +1834,7 @@ function LuckyPosition({
   onRefresh: () => void | Promise<void>
 }) {
   const result = snapshot?.phase
+  const isLongShot = round.game === 'long-shot'
   const announced = useRef<string | null>(null)
   const refreshedAtExpiry = useRef<string | null>(null)
   const secondsLeft = useEventSeconds(round.expiresAt) ?? 0
@@ -1181,18 +1912,21 @@ function LuckyPosition({
     announced.current = key
     if (result === 'won' || result === 'claimable') {
       hapticPattern('win')
-      luckyWin()
+      if (isLongShot) moonshotWin()
+      else luckyWin()
     } else if (result === 'lost') {
       hapticPattern('lose')
-      luckyLose()
+      if (isLongShot) moonshotLose()
+      else luckyLose()
     } else if (result === 'claimed') {
       hapticPattern('cashOut')
       chipsGranted()
     } else if (result === 'cashed-out') {
       hapticPattern('cashOut')
-      luckyCashout()
+      if (isLongShot) moonshotCashout()
+      else luckyCashout()
     }
-  }, [result, round.marketId])
+  }, [isLongShot, result, round.marketId])
 
   if (!resolved) {
     return (
@@ -1403,7 +2137,7 @@ function LuckyPosition({
         className={cnm('flex items-center justify-between pb-3', RIM, RIM_TOP)}
       >
         <div className="font-mono text-[10px] font-black uppercase tracking-[0.15em] text-text-3">
-          Lucky position
+          {isLongShot ? 'Long Shot position' : 'Lucky position'}
         </div>
         <div className="font-mono text-[10px] font-black uppercase tracking-[0.15em] text-brand-500">
           Onchain

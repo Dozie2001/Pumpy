@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   normalizeBinaryMarket,
   selectClosingPumpyMarket,
+  selectFixedStrikePumpyMarket,
+  selectFixedStrikePumpyMarkets,
   selectNextPumpyMarket,
   selectPumpyMarket,
 } from './normalize'
@@ -145,6 +147,53 @@ describe('DreamDEX binary market normalization', () => {
 
     expect(market.reference).toBe('fixed-strike')
     expect(market.targetPriceRaw).toBe('7725105')
+  })
+
+  it('returns only safely tradable fixed-strike Long Shot targets', () => {
+    const opening = normalizeBinaryMarket(binaryMarket(), NOW)
+    const closing = normalizeBinaryMarket(
+      binaryMarket({
+        marketId: `0x${'60'.repeat(32)}`,
+        strike: '8020000',
+        expiry: String(NOW + 10),
+        intervalSec: '60',
+      }),
+      NOW,
+    )
+    const fiveMinute = normalizeBinaryMarket(
+      binaryMarket({
+        marketId: `0x${'70'.repeat(32)}`,
+        strike: '8050000',
+        expiry: String(NOW + 300),
+        intervalSec: '300',
+      }),
+      NOW,
+    )
+    const oneMinute = normalizeBinaryMarket(
+      binaryMarket({
+        marketId: `0x${'80'.repeat(32)}`,
+        strike: '8030000',
+        expiry: String(NOW + 300),
+        intervalSec: '60',
+      }),
+      NOW,
+    )
+
+    expect(
+      selectFixedStrikePumpyMarkets(
+        [opening, closing, oneMinute, fiveMinute],
+        'BTC',
+        NOW,
+      ),
+    ).toEqual([fiveMinute, oneMinute])
+    expect(
+      selectFixedStrikePumpyMarket(
+        [opening, oneMinute, fiveMinute],
+        'BTC',
+        1,
+        NOW,
+      ),
+    ).toEqual(oneMinute)
   })
 
   it('never selects a market inside the same safety window used by placement', () => {

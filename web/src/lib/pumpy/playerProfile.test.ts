@@ -144,4 +144,20 @@ describe('Pumpy player profile', () => {
       achievements.find((badge) => badge.id === 'candle-twenty')?.unlocked,
     ).toBe(false)
   })
+
+  it('derives Range badges from recorded arcade bests', () => {
+    const achievements = profileAchievements(
+      readPlayerProfile(storage(), account),
+      0,
+      750,
+      4,
+    )
+
+    expect(
+      achievements.find((badge) => badge.id === 'range-keeper')?.unlocked,
+    ).toBe(true)
+    expect(
+      achievements.find((badge) => badge.id === 'full-stack')?.unlocked,
+    ).toBe(true)
+  })
 })

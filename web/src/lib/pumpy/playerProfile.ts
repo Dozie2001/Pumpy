@@ -13,6 +13,7 @@ export type PumpyPlayRecord = {
   id: Hash
   marketId: Hex
   asset: string
+  game?: 'lucky' | 'long-shot'
   side: 'UP' | 'DOWN'
   collateralSymbol: string
   collateralDecimals: number
@@ -26,7 +27,7 @@ export type PumpyPlayRecord = {
 export type PumpyPlayerProfile = {
   version: 1
   account: Address
-  plays: PumpyPlayRecord[]
+  plays: Array<PumpyPlayRecord>
 }
 
 export type PumpyAchievement = {
@@ -69,6 +70,7 @@ export function readPlayerProfile(
 export function recordPlayerTrade(params: {
   storage: Pick<Storage, 'getItem' | 'setItem'>
   account: Address
+  game?: PumpyPlayRecord['game']
   market: PumpyEventMarket
   trade: PreparedPlayerTrade
   outcome: PlayerOrderOutcome
@@ -79,6 +81,7 @@ export function recordPlayerTrade(params: {
     id: params.outcome.hash,
     marketId: params.market.marketId,
     asset: params.market.asset,
+    game: params.game ?? 'lucky',
     side: params.trade.side,
     collateralSymbol: params.trade.collateralSymbol,
     collateralDecimals: params.trade.collateralDecimals,
@@ -112,7 +115,9 @@ export function profileVolumeRaw(profile: PumpyPlayerProfile): bigint {
 export function profileAchievements(
   profile: PumpyPlayerProfile,
   candleBest: number,
-): PumpyAchievement[] {
+  rangeBest = 0,
+  rangeMaxStack = 0,
+): Array<PumpyAchievement> {
   const sides = new Set(profile.plays.map((play) => play.side))
   const volume = profile.plays.reduce(
     (total, play) =>
@@ -162,6 +167,20 @@ export function profileAchievements(
       unlocked: candleBest >= 20,
       progress: `${Math.min(candleBest, 20)}/20`,
     },
+    {
+      id: 'range-keeper',
+      name: 'Range Keeper',
+      description: 'Score 500 points in one Range session.',
+      unlocked: rangeBest >= 500,
+      progress: `${Math.min(rangeBest, 500)}/500`,
+    },
+    {
+      id: 'full-stack',
+      name: 'Full Stack',
+      description: 'Ride four live Range bands at once.',
+      unlocked: rangeMaxStack >= 4,
+      progress: `${Math.min(rangeMaxStack, 4)}/4`,
+    },
   ]
 }
 
@@ -173,6 +192,9 @@ function isPlayRecord(value: unknown): value is PumpyPlayRecord {
     /^0x[0-9a-fA-F]{64}$/.test(record.id) &&
     typeof record.marketId === 'string' &&
     typeof record.asset === 'string' &&
+    (record.game === undefined ||
+      record.game === 'lucky' ||
+      record.game === 'long-shot') &&
     (record.side === 'UP' || record.side === 'DOWN') &&
     typeof record.collateralSymbol === 'string' &&
     Number.isInteger(record.collateralDecimals) &&
