@@ -1,7 +1,6 @@
 import {
   Activity,
   CandlestickChart,
-  CircleDollarSign,
   Clock3,
   Gamepad2,
   LoaderCircle,
@@ -20,25 +19,56 @@ import type {
   PumpyEventMarket,
 } from '@/lib/dreamdex/types'
 import { useConsoleControls } from '@/components/console/controls'
+import {
+  CandleHopEngine,
+  candleHopOutcome,
+} from '@/components/game/CandleHopEngine'
+import { GameSettlementScreen } from '@/components/game/GameSettlementScreen'
 import { LivePrice } from '@/components/game/LivePrice'
 import { LivePriceChart } from '@/components/game/LivePriceChart'
 import { LuckyWheels } from '@/components/game/LuckyWheels'
-import { GameScreen, SCREEN_STATES, ScreenMessage } from '@/components/game/screen'
+import {
+  GameReadout,
+  GameScreen,
+  GameStage,
+  SCREEN_STATES,
+  ScreenCRT,
+  ScreenMessage,
+} from '@/components/game/screen'
 import { TestCollateralCard } from '@/components/pumpy/PumpyExperience'
+import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useEventMarkets } from '@/lib/dreamdex/useEventMarkets'
 import { useLiveAssetPrice } from '@/lib/dreamdex/useLiveAssetPrice'
 import { usePlayerQuote } from '@/lib/dreamdex/usePlayerQuote'
 import { usePlayerWallet } from '@/lib/dreamdex/usePlayerWallet'
 import { useQuickCallRound } from '@/lib/dreamdex/useQuickCallRound'
 import { useTestCollateral } from '@/lib/dreamdex/useTestCollateral'
-import { placePreparedPlayerTrade } from '@/lib/dreamdex/trade'
+import { eventSecondsRemaining } from '@/lib/dreamdex/eventCountdown'
+import {
+  PlayerTradeError,
+  placePreparedPlayerTrade,
+} from '@/lib/dreamdex/trade'
 import { haptic, hapticPattern } from '@/lib/haptics'
 import { recordPlayerTrade } from '@/lib/pumpy/playerProfile'
-import { slotPick, slotSpin } from '@/lib/sound'
+import {
+  achievementUnlock,
+  chipsGranted,
+  hopLose,
+  hopResetCombo,
+  hopScore,
+  luckyLose,
+  luckyWin,
+  slotPick,
+  slotSpin,
+  sound,
+  startBgm,
+  stopBgm,
+} from '@/lib/sound'
 import { cnm } from '@/utils/style'
 
 type ArcadeScreen = 'hub' | 'lucky' | 'position' | 'candle-hop'
 type LuckyPhase = 'idle' | 'spinning' | 'dealt' | 'submitting' | 'error'
+type WalletStep = 'preparing' | 'approving' | 'refreshing' | 'placing' | null
 
 const STAKES = [1, 5, 10, 25, 50] as const
 const RIM = 'px-[var(--screen-rim,24px)]'
@@ -88,9 +118,15 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
   const [luckyPhase, setLuckyPhase] = useState<LuckyPhase>('idle')
   const [side, setSide] = useState<PlayerSide | null>(null)
   const [orderError, setOrderError] = useState<string | null>(null)
+  const [quoteNotice, setQuoteNotice] = useState<string | null>(null)
+  const [walletStep, setWalletStep] = useState<WalletStep>(null)
+  const [repriceFromObservedAt, setRepriceFromObservedAt] = useState<
+    number | null
+  >(null)
   const [lastOrder, setLastOrder] = useState<PlayerOrderOutcome | null>(null)
   const spinStartedAt = useRef(0)
   const settleTimerRef = useRef<number | null>(null)
+  const refreshedClaimBalance = useRef<string | null>(null)
 
   const markets = useEventMarkets(asset)
   const livePrice = useLiveAssetPrice(asset)
@@ -111,6 +147,13 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
   })
   const multiplier = quote.quote ? quoteMultiplier(quote.quote) : undefined
 
+  useEffect(() => {
+    const claimHash = quickCall.round?.claimHash
+    if (!claimHash || refreshedClaimBalance.current === claimHash) return
+    refreshedClaimBalance.current = claimHash
+    void testCollateral.refresh()
+  }, [quickCall.round?.claimHash, testCollateral])
+
   const go = useCallback((next: ArcadeScreen) => {
     haptic('selection')
     setScreen(next)
@@ -121,9 +164,12 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     setScreen('hub')
   }, [homeSignal])
 
-  useEffect(() => () => {
-    if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current)
-  }, [])
+  useEffect(
+    () => () => {
+      if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current)
+    },
+    [],
+  )
 
   useEffect(() => {
     if (luckyPhase !== 'spinning' || quote.phase !== 'ready') return
@@ -144,25 +190,50 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     setLuckyPhase('idle')
     setSide(null)
     setOrderError(null)
+    setQuoteNotice(null)
+    setWalletStep(null)
+    setRepriceFromObservedAt(null)
     setLastOrder(null)
   }, [market?.marketId])
 
-  const launchSelected = useCallback((index = selectedGame) => {
-    const selected = GAMES[index]
-    if (!selected.enabled) {
-      haptic('warning')
+  useEffect(() => {
+    if (
+      repriceFromObservedAt === null ||
+      quote.phase !== 'ready' ||
+      !quote.quote ||
+      quote.quote.observedAt <= repriceFromObservedAt
+    )
       return
-    }
-    if (selected.id === 'lucky') go('lucky')
-    if (selected.id === 'candle-hop') go('candle-hop')
-  }, [go, selectedGame])
+
+    setRepriceFromObservedAt(null)
+    setQuoteNotice(
+      'Odds changed. Updated terms are shown — press LOCK IN again.',
+    )
+  }, [quote.phase, quote.quote, repriceFromObservedAt])
+
+  const launchSelected = useCallback(
+    (index = selectedGame) => {
+      const selected = GAMES[index]
+      if (!selected.enabled) {
+        haptic('warning')
+        return
+      }
+      if (selected.id === 'lucky') go('lucky')
+      if (selected.id === 'candle-hop') go('candle-hop')
+    },
+    [go, selectedGame],
+  )
 
   const spin = useCallback(() => {
-    if (!market || markets.connection !== 'live' || luckyPhase !== 'idle') return
+    if (!market || markets.connection !== 'live' || luckyPhase !== 'idle')
+      return
     const bytes = new Uint8Array(1)
     crypto.getRandomValues(bytes)
     setSide(bytes[0] % 2 === 0 ? 'UP' : 'DOWN')
     setOrderError(null)
+    setQuoteNotice(null)
+    setWalletStep(null)
+    setRepriceFromObservedAt(null)
     setLastOrder(null)
     spinStartedAt.current = Date.now()
     setLuckyPhase('spinning')
@@ -173,8 +244,22 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     setSide(null)
     setLuckyPhase('idle')
     setOrderError(null)
+    setQuoteNotice(null)
+    setWalletStep(null)
+    setRepriceFromObservedAt(null)
     setLastOrder(null)
   }, [])
+
+  const playAgain = useCallback(() => {
+    quickCall.clear()
+    setSide(null)
+    setLuckyPhase('idle')
+    setOrderError(null)
+    setQuoteNotice(null)
+    setWalletStep(null)
+    setLastOrder(null)
+    go('lucky')
+  }, [go, quickCall])
 
   const submit = useCallback(async () => {
     if (wallet.status === 'wrong-network') {
@@ -192,13 +277,17 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
 
     setLuckyPhase('submitting')
     setOrderError(null)
+    setQuoteNotice(null)
+    setWalletStep('preparing')
     try {
       const outcome = await placePreparedPlayerTrade({
         trade: quote.quote,
         market,
         wallet: wallet.session,
         mode: 'quick-call',
+        onWalletStep: setWalletStep,
       })
+      setWalletStep(null)
       setLastOrder(outcome)
       if (outcome.status === 'filled' || outcome.status === 'partial') {
         quickCall.recordOrder({ market, trade: quote.quote, outcome })
@@ -223,10 +312,21 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
       }
     } catch (cause) {
       if (isWalletRejection(cause)) {
+        setWalletStep(null)
         setLuckyPhase('dealt')
         return
       }
-      hapticPattern('lose')
+      if (cause instanceof PlayerTradeError && cause.code === 'STALE_QUOTE') {
+        haptic('warning')
+        setWalletStep(null)
+        setRepriceFromObservedAt(quote.quote.observedAt)
+        setQuoteNotice(`${cause.message} Refreshing executable terms…`)
+        setLuckyPhase('dealt')
+        quote.refresh()
+        return
+      }
+      setWalletStep(null)
+      haptic('warning')
       setOrderError(
         cause instanceof Error ? cause.message : 'The order did not complete',
       )
@@ -278,7 +378,10 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     }
 
     if (screen === 'lucky') {
-      const ready = luckyPhase === 'dealt' && quote.phase === 'ready'
+      const ready =
+        luckyPhase === 'dealt' &&
+        quote.phase === 'ready' &&
+        repriceFromObservedAt === null
       return {
         action1: {
           label: luckyPhase === 'idle' ? 'HOME' : 'REROLL',
@@ -306,25 +409,32 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
         },
         main: {
           label:
-            luckyPhase === 'idle'
-              ? 'SPIN'
-              : luckyPhase === 'spinning'
-                ? 'DEALING'
-                : luckyPhase === 'submitting'
-                  ? 'SIGNING'
-                  : wallet.status === 'wrong-network'
-                    ? 'SWITCH'
-                    : wallet.status !== 'connected'
-                      ? 'CONNECT'
-                      : ready
-                        ? 'LOCK IN'
-                        : luckyPhase === 'error'
-                          ? 'TRY AGAIN'
-                          : 'QUOTING',
+            luckyPhase === 'idle' && !market
+              ? 'WAIT'
+              : luckyPhase === 'idle'
+                ? 'SPIN'
+                : luckyPhase === 'spinning'
+                  ? 'DEALING'
+                  : luckyPhase === 'submitting'
+                    ? walletStep === 'approving'
+                      ? 'APPROVE'
+                      : walletStep === 'placing'
+                        ? 'SIGN ORDER'
+                        : 'CHECKING'
+                    : wallet.status === 'wrong-network'
+                      ? 'SWITCH'
+                      : wallet.status !== 'connected'
+                        ? 'CONNECT'
+                        : ready
+                          ? 'LOCK IN'
+                          : luckyPhase === 'error'
+                            ? 'TRY AGAIN'
+                            : 'QUOTING',
           color: luckyPhase === 'dealt' ? 'up' : 'amber',
           loading: luckyPhase === 'spinning' || luckyPhase === 'submitting',
           onPress: () => {
-            if (luckyPhase === 'idle') spin()
+            if (luckyPhase === 'idle' && !market) haptic('warning')
+            else if (luckyPhase === 'idle') spin()
             else if (luckyPhase === 'error') reroll()
             else if (luckyPhase === 'dealt') void submit()
           },
@@ -337,7 +447,14 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     }
 
     if (screen === 'position') {
-      const canClaim = quickCall.snapshot?.phase === 'claimable'
+      const result = quickCall.snapshot?.phase
+      const canClaim =
+        (result === 'claimable' || result === 'voided') &&
+        (quickCall.snapshot?.claimableRaw ?? 0n) > 0n
+      const canPlayAgain =
+        result === 'lost' ||
+        result === 'claimed' ||
+        (result === 'voided' && !canClaim)
       return {
         action1: { label: 'HOME', color: 'neutral', onPress: () => go('hub') },
         action2: {
@@ -346,10 +463,19 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           onPress: () => void quickCall.refresh(),
         },
         main: {
-          label: canClaim ? 'CLAIM' : 'CHECK CHAIN',
-          color: canClaim ? 'amber' : 'neutral',
-          loading: quickCall.phase === 'loading' || quickCall.phase === 'claiming',
-          onPress: () => canClaim ? void quickCall.claim() : void quickCall.refresh(),
+          label: canClaim
+            ? 'CLAIM'
+            : canPlayAgain
+              ? 'PLAY AGAIN'
+              : 'CHECK CHAIN',
+          color: canClaim || canPlayAgain ? 'amber' : 'neutral',
+          loading:
+            quickCall.phase === 'loading' || quickCall.phase === 'claiming',
+          onPress: () => {
+            if (canClaim) void quickCall.claim()
+            else if (canPlayAgain) playAgain()
+            else void quickCall.refresh()
+          },
         },
         status: {
           left: quickCall.round?.asset ?? 'LUCKY',
@@ -368,13 +494,16 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     markets.connection,
     quickCall,
     quote.phase,
+    repriceFromObservedAt,
     reroll,
     screen,
     selectedGame,
     spin,
     stakeIndex,
     submit,
+    walletStep,
     wallet.status,
+    playAgain,
   ])
 
   if (screen === 'candle-hop') {
@@ -406,6 +535,8 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
         <LuckyGame
           asset={asset}
           market={market}
+          closingMarket={markets.closing}
+          nextMarket={markets.next}
           marketPhase={markets.phase}
           phase={luckyPhase}
           side={side}
@@ -416,7 +547,11 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           multiplier={multiplier}
           livePrice={livePrice}
           collateral={testCollateral}
+          walletStatus={wallet.status}
+          walletStep={walletStep}
           orderError={orderError}
+          quoteNotice={quoteNotice}
+          repricePending={repriceFromObservedAt !== null}
           order={lastOrder}
         />
       )}
@@ -426,6 +561,8 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           snapshot={quickCall.snapshot}
           phase={quickCall.phase}
           error={quickCall.error}
+          livePrice={livePrice}
+          onRefresh={quickCall.refresh}
         />
       )}
     </GameScreen>
@@ -464,19 +601,36 @@ function GameHub({
 }) {
   return (
     <div className="flex h-full flex-col">
-      <div className={cnm('flex items-center justify-between pb-2.5', RIM, RIM_TOP)}>
+      <div
+        className={cnm(
+          'flex items-center justify-between pb-2.5',
+          RIM,
+          RIM_TOP,
+        )}
+      >
         <div className="flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.15em] text-text-2">
-          <span className={cnm('h-2 w-2', connection === 'live' ? 'bg-up' : 'bg-pumpy-caution')} />
+          <span
+            className={cnm(
+              'h-2 w-2',
+              connection === 'live' ? 'bg-up' : 'bg-pumpy-caution',
+            )}
+          />
           DreamDEX {connection}
         </div>
-        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-brand-500">Pumpy Arcade</span>
+        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-brand-500">
+          Pumpy Arcade
+        </span>
       </div>
       <div className="h-px bg-line-strong" />
 
       <div className={cnm('flex items-center justify-between py-3', RIM)}>
         <div>
-          <div className="font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-text-3">Market deck</div>
-          <div className="mt-0.5 text-[20px] font-black uppercase leading-none text-text">Choose a game</div>
+          <div className="font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-text-3">
+            Market deck
+          </div>
+          <div className="mt-0.5 text-[20px] font-black uppercase leading-none text-text">
+            Choose a game
+          </div>
         </div>
         <div className="flex gap-1.5">
           {['BTC', 'ETH'].map((ticker) => (
@@ -519,20 +673,43 @@ function GameHub({
                 active && 'bg-brand-500/[0.12]',
               )}
             >
-              {active && <span className="absolute inset-y-0 left-0 w-1 bg-brand-500" />}
-              <span className={cnm('font-mono text-[12px] font-black', active ? 'text-brand-500' : 'text-text-3')}>
+              {active && (
+                <span className="absolute inset-y-0 left-0 w-1 bg-brand-500" />
+              )}
+              <span
+                className={cnm(
+                  'font-mono text-[12px] font-black',
+                  active ? 'text-brand-500' : 'text-text-3',
+                )}
+              >
                 {String(index + 1).padStart(2, '0')}
               </span>
-              <Icon className={cnm('h-7 w-7 shrink-0', active ? 'text-brand-500' : 'text-text-3')} aria-hidden="true" />
+              <Icon
+                className={cnm(
+                  'h-7 w-7 shrink-0',
+                  active ? 'text-brand-500' : 'text-text-3',
+                )}
+                aria-hidden="true"
+              />
               <span className="min-w-0 flex-1">
-                <span className={cnm('block text-[16px] font-black uppercase leading-none', active ? 'text-text' : 'text-text-2')}>
+                <span
+                  className={cnm(
+                    'block text-[16px] font-black uppercase leading-none',
+                    active ? 'text-text' : 'text-text-2',
+                  )}
+                >
                   {game.name}
                 </span>
                 <span className="mt-1 block truncate font-mono text-[9px] uppercase tracking-[0.08em] text-text-3">
                   {game.description}
                 </span>
               </span>
-              <span className={cnm('font-mono text-[9px] font-black tracking-[0.1em]', game.enabled ? 'text-up' : 'text-text-3')}>
+              <span
+                className={cnm(
+                  'font-mono text-[9px] font-black tracking-[0.1em]',
+                  game.enabled ? 'text-up' : 'text-text-3',
+                )}
+              >
                 {game.kind}
               </span>
             </button>
@@ -540,21 +717,35 @@ function GameHub({
         })}
       </div>
 
-      <div className={cnm('border-t border-line-strong bg-black pt-3', RIM, RIM_BOTTOM)}>
+      <div
+        className={cnm(
+          'border-t border-line-strong bg-black pt-3',
+          RIM,
+          RIM_BOTTOM,
+        )}
+      >
         <div className="max-w-[62%]">
           {hasRound ? (
             <div className="flex items-center gap-2 text-pumpy-cyan">
               <Clock3 className="h-4 w-4" aria-hidden="true" />
-              <span className="font-mono text-[10px] font-black uppercase tracking-[0.12em]">Live position · press resume</span>
+              <span className="font-mono text-[10px] font-black uppercase tracking-[0.12em]">
+                Live position · press resume
+              </span>
             </div>
           ) : (
             <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-text-3">
-              {loading ? 'Loading Event Contracts…' : market ? `${asset} · ${market.intervalLabel} · ${market.collateralSymbol}` : `No ${asset} game live`}
+              {loading
+                ? 'Loading Event Contracts…'
+                : market
+                  ? `${asset} · ${market.intervalLabel} · ${market.collateralSymbol}`
+                  : `No ${asset} game live`}
             </div>
           )}
           <div className="mt-2 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.08em] text-text-3">
             <WalletCards className="h-3.5 w-3.5" aria-hidden="true" />
-            {wallet.address ? shortId(wallet.address) : 'Wallet connects when you lock a play'}
+            {wallet.address
+              ? shortId(wallet.address)
+              : 'Wallet connects when you lock a play'}
           </div>
           {wallet.address && <TestCollateralCard collateral={collateral} />}
         </div>
@@ -566,6 +757,8 @@ function GameHub({
 function LuckyGame({
   asset,
   market,
+  closingMarket,
+  nextMarket,
   marketPhase,
   phase,
   side,
@@ -576,11 +769,17 @@ function LuckyGame({
   multiplier,
   livePrice,
   collateral,
+  walletStatus,
+  walletStep,
   orderError,
+  quoteNotice,
+  repricePending,
   order,
 }: {
   asset: string
   market: PumpyEventMarket | null
+  closingMarket: PumpyEventMarket | null
+  nextMarket: PumpyEventMarket | null
   marketPhase: string
   phase: LuckyPhase
   side: PlayerSide | null
@@ -591,11 +790,36 @@ function LuckyGame({
   multiplier?: number
   livePrice: LiveAssetPriceState
   collateral: ReturnType<typeof useTestCollateral>
+  walletStatus: ReturnType<typeof usePlayerWallet>['status']
+  walletStep: WalletStep
   orderError: string | null
+  quoteNotice: string | null
+  repricePending: boolean
   order: PlayerOrderOutcome | null
 }) {
+  const nextStartsIn = useEventSeconds(nextMarket?.tradingStartsAt ?? null)
+
   if (marketPhase === 'loading') {
-    return <ScreenMessage title="Loading the reels" body="Finding a live DreamDEX Event Contract." hint="Syncing" />
+    return (
+      <ScreenMessage
+        title="Loading the reels"
+        body="Finding a live DreamDEX Event Contract."
+        hint="Syncing"
+      />
+    )
+  }
+  if (!market && (closingMarket || nextMarket)) {
+    return (
+      <ScreenMessage
+        title={nextMarket ? 'Next round loading' : 'Round closing'}
+        body={
+          nextMarket
+            ? `${asset} trading opens in ${nextStartsIn ?? 0}s. Pumpy will select it automatically.`
+            : `The current ${asset} Event Contract is inside the safety window. Waiting for DreamDEX to list its successor.`
+        }
+        hint="No wallet action needed"
+      />
+    )
   }
   if (!market) return <ScreenMessage {...SCREEN_STATES.noMarket} />
 
@@ -610,18 +834,44 @@ function LuckyGame({
   const available = collateral.snapshot
     ? formatUnits(collateral.snapshot.balanceRaw, collateral.snapshot.decimals)
     : null
+  const nextAction =
+    phase === 'submitting'
+      ? walletStep === 'approving'
+        ? `Approve ${market.collateralSymbol} in your wallet`
+        : walletStep === 'placing'
+          ? 'Confirm the order in your wallet'
+          : walletStep === 'refreshing'
+            ? 'Rechecking the market after approval'
+            : 'Checking the final live terms'
+      : repricePending || quotePhase === 'loading'
+        ? 'Refreshing executable odds'
+        : walletStatus === 'wrong-network'
+          ? 'Press SWITCH to use Shannon'
+          : walletStatus !== 'connected'
+            ? 'Press CONNECT to continue'
+            : 'Press LOCK IN to sign'
 
   return (
     <div className="relative flex h-full flex-col">
-      <div className={cnm('flex shrink-0 items-start justify-between gap-3 bg-black pb-2.5', RIM, RIM_TOP)}>
+      <div
+        className={cnm(
+          'flex shrink-0 items-start justify-between gap-3 bg-black pb-2.5',
+          RIM,
+          RIM_TOP,
+        )}
+      >
         <div className="min-w-0">
-          <div className="font-mono text-[9px] font-black uppercase tracking-[0.16em] text-text-3">{asset} / USD</div>
+          <div className="font-mono text-[9px] font-black uppercase tracking-[0.16em] text-text-3">
+            {asset} / USD
+          </div>
           <div className="mt-0.5 overflow-hidden text-[34px] font-black leading-none text-text tabular-nums">
             <LivePrice price={livePrice.price} />
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">Available</div>
+          <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
+            Available
+          </div>
           <div className="mt-0.5 text-[20px] font-black leading-none text-text-2 tabular-nums">
             {available == null ? '—' : `$${formatMoney(available)}`}
           </div>
@@ -636,7 +886,9 @@ function LuckyGame({
           className="absolute inset-0 transition-[opacity,transform] duration-300"
           style={{
             opacity: dealt ? 0 : 1,
-            transform: dealt ? 'translateY(-10px) scale(.76)' : 'translateY(0) scale(1)',
+            transform: dealt
+              ? 'translateY(-10px) scale(.76)'
+              : 'translateY(0) scale(1)',
             transformOrigin: 'center top',
           }}
         >
@@ -654,14 +906,23 @@ function LuckyGame({
           {side && (
             <>
               <div className="text-center">
-                <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">Direction</div>
-                <div className={cnm('mt-1 text-[25px] font-black leading-none', side === 'UP' ? 'text-up' : 'text-down')}>
+                <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
+                  Direction
+                </div>
+                <div
+                  className={cnm(
+                    'mt-1 text-[25px] font-black leading-none',
+                    side === 'UP' ? 'text-up' : 'text-down',
+                  )}
+                >
                   {side === 'UP' ? '▲ UP' : '▼ DOWN'}
                 </div>
               </div>
               <div className="h-9 w-px bg-line-strong" />
               <div className="text-center">
-                <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">Live odds</div>
+                <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
+                  Live odds
+                </div>
                 <div className="mt-1 text-[25px] font-black leading-none text-brand-500">
                   {multiplier ? `${multiplier.toFixed(2)}×` : '—'}
                 </div>
@@ -673,23 +934,43 @@ function LuckyGame({
 
       <LivePriceChart state={livePrice} className="flex-1" />
 
-      <div className={cnm('min-h-[var(--screen-notch,21%)] shrink-0 border-t border-line-strong bg-black pt-3.5', RIM, RIM_BOTTOM)}>
+      <div
+        className={cnm(
+          'min-h-[var(--screen-notch,21%)] shrink-0 border-t border-line-strong bg-black pt-3.5',
+          RIM,
+          RIM_BOTTOM,
+        )}
+      >
         <div className="max-w-[60%]">
           {phase === 'idle' && (
             <>
-              <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">Lucky</div>
-              <div className="mt-0.5 text-[22px] font-black uppercase leading-none text-text">I Feel Lucky</div>
-              <div className="mt-3 flex items-baseline gap-2">
-                <span className="text-[30px] font-black leading-none text-brand-500 tabular-nums">${stake}</span>
-                <span className="font-mono text-[9px] font-black uppercase tracking-[0.12em] text-text-3">Amount</span>
+              <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
+                Lucky
               </div>
-              <div className="mt-2.5 font-mono text-[9px] font-bold uppercase leading-snug tracking-[0.08em] text-text-2">Press the button on the right to spin</div>
+              <div className="mt-0.5 text-[22px] font-black uppercase leading-none text-text">
+                I Feel Lucky
+              </div>
+              <div className="mt-3 flex items-baseline gap-2">
+                <span className="text-[30px] font-black leading-none text-brand-500 tabular-nums">
+                  ${stake}
+                </span>
+                <span className="font-mono text-[9px] font-black uppercase tracking-[0.12em] text-text-3">
+                  Amount
+                </span>
+              </div>
+              <div className="mt-2.5 font-mono text-[9px] font-bold uppercase leading-snug tracking-[0.08em] text-text-2">
+                Press the button on the right to spin
+              </div>
             </>
           )}
           {spinning && (
             <>
-              <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">Dealing</div>
-              <div className="mt-1 text-[28px] font-black uppercase leading-none text-brand-500">Spinning…</div>
+              <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
+                Dealing
+              </div>
+              <div className="mt-1 text-[28px] font-black uppercase leading-none text-brand-500">
+                Spinning…
+              </div>
               <div className="mt-2 font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-text-2">
                 {quotePhase === 'loading' ? 'Reading live odds' : 'Deal ready'}
               </div>
@@ -697,7 +978,9 @@ function LuckyGame({
           )}
           {dealt && (
             <>
-              <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">Wallet-signed play</div>
+              <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
+                Wallet-signed play
+              </div>
               {quote ? (
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   <Readout label="Cost" value={`$${formatMoney(premium)}`} />
@@ -706,15 +989,30 @@ function LuckyGame({
                 </div>
               ) : (
                 <div className="mt-2 flex items-center gap-2 font-mono text-[9px] font-bold uppercase text-text-3">
-                  <LoaderCircle className="h-4 w-4 animate-spin" /> Refreshing odds
+                  <LoaderCircle className="h-4 w-4 animate-spin" /> Refreshing
+                  odds
                 </div>
               )}
-              <div className="mt-2.5 font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-text-2">Review, then lock in</div>
+              <div className="mt-2.5 font-mono text-[9px] font-black uppercase tracking-[0.08em] text-brand-500">
+                {nextAction}
+              </div>
+              <div className="mt-1 font-mono text-[8px] uppercase tracking-[0.06em] text-text-3">
+                Nothing is placed until you approve
+              </div>
             </>
           )}
           {(orderError || quoteError) && (
             <div className="mt-2 border-l-2 border-down pl-2 font-mono text-[8px] uppercase leading-[1.4] text-down">
-              {orderError ?? quoteError}{order?.hash ? ` · ${shortId(order.hash)}` : ''}
+              {orderError ?? quoteError}
+              {order?.hash ? ` · ${shortId(order.hash)}` : ''}
+            </div>
+          )}
+          {quoteNotice && !orderError && !quoteError && (
+            <div
+              className="mt-2 border-l-2 border-pumpy-caution pl-2 font-mono text-[8px] font-black uppercase leading-[1.4] text-pumpy-caution"
+              role="status"
+            >
+              {quoteNotice}
             </div>
           )}
         </div>
@@ -728,48 +1026,282 @@ function LuckyPosition({
   snapshot,
   phase,
   error,
+  livePrice,
+  onRefresh,
 }: {
   round: NonNullable<ReturnType<typeof useQuickCallRound>['round']>
   snapshot: ReturnType<typeof useQuickCallRound>['snapshot']
   phase: ReturnType<typeof useQuickCallRound>['phase']
   error: string | null
+  livePrice: LiveAssetPriceState
+  onRefresh: () => void | Promise<void>
 }) {
   const result = snapshot?.phase
-  const tone = result === 'won' || result === 'claimable' || result === 'claimed'
-    ? 'text-up'
-    : result === 'lost'
-      ? 'text-down'
-      : 'text-brand-500'
+  const announced = useRef<string | null>(null)
+  const refreshedAtExpiry = useRef<string | null>(null)
+  const secondsLeft = useEventSeconds(round.expiresAt) ?? 0
+  const expired = secondsLeft <= 0
+  const resolved =
+    result === 'claimable' ||
+    result === 'won' ||
+    result === 'lost' ||
+    result === 'voided' ||
+    result === 'claimed'
+  const frozenPrice = useRef<LiveAssetPriceState | null>(null)
+  if (!expired) {
+    frozenPrice.current = { ...livePrice, points: [...livePrice.points] }
+  }
+  const chartState = expired ? (frozenPrice.current ?? livePrice) : livePrice
+  const costRaw = BigInt(round.escrowRaw)
+  const filledPayoutRaw = BigInt(round.filledQuantityRaw)
+  const payoutRaw =
+    snapshot && snapshot.estimatedPayoutRaw > 0n
+      ? snapshot.estimatedPayoutRaw
+      : filledPayoutRaw
+  const profitRaw = payoutRaw > costRaw ? payoutRaw - costRaw : 0n
+  const refundRaw =
+    snapshot && snapshot.claimableRaw > 0n
+      ? snapshot.estimatedPayoutRaw > 0n
+        ? snapshot.estimatedPayoutRaw
+        : snapshot.claimableRaw
+      : costRaw
+  const cost = moneyFromRaw(costRaw, round.collateralDecimals)
+  const payout = moneyFromRaw(payoutRaw, round.collateralDecimals)
+  const profit = moneyFromRaw(profitRaw, round.collateralDecimals)
+  const refund = moneyFromRaw(refundRaw, round.collateralDecimals)
+
+  useEffect(() => {
+    if (!expired || resolved || refreshedAtExpiry.current === round.marketId)
+      return
+    refreshedAtExpiry.current = round.marketId
+    void onRefresh()
+  }, [expired, onRefresh, resolved, round.marketId])
+
+  useEffect(() => {
+    let key: string | null = null
+    if (result === 'won' || result === 'claimable')
+      key = `${round.marketId}:win`
+    else if (result === 'lost') key = `${round.marketId}:loss`
+    else if (result === 'claimed') key = `${round.marketId}:claimed`
+    if (!key || announced.current === key) return
+    announced.current = key
+    if (result === 'won' || result === 'claimable') {
+      hapticPattern('win')
+      luckyWin()
+    } else if (result === 'lost') {
+      hapticPattern('lose')
+      luckyLose()
+    } else if (result === 'claimed') {
+      hapticPattern('cashOut')
+      chipsGranted()
+    }
+  }, [result, round.marketId])
+
+  if (!resolved) {
+    return (
+      <div className="relative flex h-full flex-col">
+        <div
+          className={cnm(
+            'flex shrink-0 items-start justify-between gap-3 bg-black pb-2.5',
+            RIM,
+            RIM_TOP,
+          )}
+        >
+          <div className="min-w-0">
+            <div className="font-mono text-[9px] font-black uppercase tracking-[0.16em] text-text-3">
+              {round.asset} / USD
+            </div>
+            <div className="mt-0.5 overflow-hidden text-[34px] font-black leading-none text-text tabular-nums">
+              <LivePrice price={chartState.price} />
+            </div>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
+              Time
+            </div>
+            <div className="mt-0.5 text-[20px] font-black leading-none text-text-2 tabular-nums">
+              {secondsLeft}s
+            </div>
+          </div>
+        </div>
+
+        <div className="flex h-[68px] shrink-0 items-center justify-center gap-8 border-y border-line-strong bg-black px-[var(--screen-rim,24px)]">
+          <div className="text-center">
+            <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
+              Direction
+            </div>
+            <div
+              className={cnm(
+                'mt-1 text-[25px] font-black leading-none',
+                round.side === 'UP' ? 'text-up' : 'text-down',
+              )}
+            >
+              {round.side === 'UP' ? '▲ UP' : '▼ DOWN'}
+            </div>
+          </div>
+          <div className="h-9 w-px bg-line-strong" />
+          <div className="text-center">
+            <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
+              Possible payout
+            </div>
+            <div className="mt-1 text-[25px] font-black leading-none text-brand-500">
+              ${payout}
+            </div>
+          </div>
+        </div>
+
+        <div className="relative min-h-0 flex-1">
+          <LivePriceChart
+            state={chartState}
+            className="absolute inset-0"
+            eventCountdown={String(secondsLeft)}
+          />
+          {expired && (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/35">
+              <div className="border border-brand-500/50 bg-black/85 px-4 py-2 text-center shadow-[0_0_24px_rgba(184,255,74,.12)]">
+                <div className="font-mono text-[9px] font-black uppercase tracking-[0.18em] text-brand-500">
+                  Settling
+                </div>
+                <div className="mt-1 font-mono text-[8px] font-bold uppercase tracking-[0.08em] text-text-2">
+                  Waiting for DreamDEX
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div
+          className={cnm(
+            'min-h-[var(--screen-notch,21%)] shrink-0 border-t border-line-strong bg-black pt-3.5',
+            RIM,
+            RIM_BOTTOM,
+          )}
+        >
+          <div className="max-w-[64%]">
+            <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
+              {expired ? 'Oracle resolution' : 'Position open'}
+            </div>
+            <div className="mt-1 text-[25px] font-black uppercase leading-none text-brand-500">
+              {expired ? 'Settling' : 'In play'}
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <Readout label="Cost" value={`$${cost}`} />
+              <Readout label="Payout" value={`$${payout}`} />
+              <Readout label="Profit" value={`+$${profit}`} />
+            </div>
+            <div className="mt-2 font-mono text-[8px] uppercase leading-[1.4] tracking-[0.06em] text-text-3">
+              {expired
+                ? 'No result is shown until DreamDEX resolves onchain'
+                : 'The oracle—not the live display—decides the final result'}
+            </div>
+            {error && (
+              <div className="mt-2 border-l-2 border-down pl-2 font-mono text-[8px] uppercase leading-[1.4] text-down">
+                {error}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const presentation =
+    result === 'claimable'
+      ? {
+          tone: 'win' as const,
+          kicker: 'Resolved onchain',
+          title: 'You won',
+          value: `+$${profit}`,
+          body: `Your total payout is $${payout}. Press CLAIM to send it to your wallet.`,
+        }
+      : result === 'won'
+        ? {
+            tone: 'win' as const,
+            kicker: 'Outcome confirmed',
+            title: 'You won',
+            value: `+$${profit}`,
+            body: 'The Event Contract resolved in your direction. Claimability is still syncing.',
+          }
+        : result === 'lost'
+          ? {
+              tone: 'loss' as const,
+              kicker: 'Resolved onchain',
+              title: 'Missed',
+              value: `−$${cost}`,
+              body: `DreamDEX resolved against ${round.side}. Your actual filled cost was $${cost}.`,
+            }
+          : result === 'claimed'
+            ? {
+                tone: 'claimed' as const,
+                kicker: 'Claim confirmed',
+                title: 'Paid out',
+                value: `$${payout}`,
+                body: 'The payout claim was confirmed and sent to your wallet.',
+              }
+            : {
+                tone: 'claimed' as const,
+                kicker: 'Market voided',
+                title: 'Returned',
+                value: `$${refund}`,
+                body:
+                  (snapshot?.claimableRaw ?? 0n) > 0n
+                    ? 'DreamDEX voided this market. Press CLAIM to retrieve the available refund.'
+                    : 'DreamDEX voided this market. Refund availability is still syncing.',
+              }
+
   return (
     <div className="flex h-full flex-col">
-      <div className={cnm('flex items-center justify-between pb-3', RIM, RIM_TOP)}>
-        <div className="font-mono text-[10px] font-black uppercase tracking-[0.15em] text-text-3">Lucky position</div>
-        <div className="font-mono text-[10px] font-black uppercase tracking-[0.15em] text-brand-500">Onchain</div>
+      <div
+        className={cnm('flex items-center justify-between pb-3', RIM, RIM_TOP)}
+      >
+        <div className="font-mono text-[10px] font-black uppercase tracking-[0.15em] text-text-3">
+          Lucky position
+        </div>
+        <div className="font-mono text-[10px] font-black uppercase tracking-[0.15em] text-brand-500">
+          Onchain
+        </div>
       </div>
       <div className="h-px bg-line-strong" />
-      <div className={cnm('flex min-h-0 flex-1 flex-col justify-center', RIM)}>
-        <div className="font-mono text-[10px] font-black uppercase tracking-[0.16em] text-text-3">{round.asset} · {round.side}</div>
-        <div className={cnm('mt-2 text-[42px] font-black uppercase leading-none', tone)}>
-          {(result ?? phase).replaceAll('_', ' ')}
+      <GameSettlementScreen {...presentation}>
+        <div className="mx-auto mt-5 grid max-w-[280px] grid-cols-3 gap-4 border-y border-white/10 py-3 text-left">
+          <Readout label="Cost" value={`$${cost}`} />
+          <Readout
+            label={result === 'voided' ? 'Refund' : 'Payout'}
+            value={
+              result === 'lost'
+                ? '$0.00'
+                : result === 'voided'
+                  ? `$${refund}`
+                  : `$${payout}`
+            }
+          />
+          <Readout
+            label={result === 'lost' ? 'Lost' : 'Profit'}
+            value={result === 'lost' ? `−$${cost}` : `+$${profit}`}
+          />
         </div>
-        <p className="mt-3 max-w-[36ch] text-[12px] font-semibold leading-[1.45] text-text-2">{round.question}</p>
-        <div className="mt-5 grid grid-cols-2 gap-4 border-y border-line-strong py-3">
-          <Readout label="Filled" value={formatMoney(formatUnits(BigInt(round.filledQuantityRaw), round.collateralDecimals))} />
-          <Readout label="Escrow" value={`$${formatMoney(formatUnits(BigInt(round.escrowRaw), round.collateralDecimals))}`} />
-          <Readout label="Expires" value={new Date(round.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
-          <Readout label="Order" value={shortId(round.orderHash)} />
-        </div>
-        {snapshot?.claimableRaw && snapshot.claimableRaw > 0n ? (
-          <div className="mt-4 flex items-center gap-2 text-up">
-            <CircleDollarSign className="h-5 w-5" />
-            <span className="font-mono text-[11px] font-black uppercase tracking-[0.1em]">Payout ready to claim</span>
-          </div>
-        ) : null}
-        {error && <p className="mt-4 font-mono text-[9px] uppercase leading-[1.4] text-down">{error}</p>}
-      </div>
+        {error && (
+          <p className="mx-auto mt-3 max-w-[32ch] font-mono text-[8px] uppercase leading-[1.4] text-down">
+            {error}
+          </p>
+        )}
+        {round.claimHash && (
+          <p className="mx-auto mt-3 font-mono text-[8px] uppercase tracking-[0.1em] text-text-3">
+            Claim {shortId(round.claimHash)}
+          </p>
+        )}
+      </GameSettlementScreen>
       <div className={cnm('border-t border-line-strong pt-3', RIM, RIM_BOTTOM)}>
         <div className="max-w-[62%] font-mono text-[9px] uppercase leading-[1.45] tracking-[0.08em] text-text-3">
-          Resolution and claims come from DreamDEX. A submitted order is not shown as a win until the market resolves.
+          {result === 'claimable'
+            ? 'Payout ready · press claim'
+            : result === 'voided' && (snapshot?.claimableRaw ?? 0n) > 0n
+              ? 'Refund ready · press claim'
+              : result === 'claimed'
+                ? 'Claim recorded onchain'
+                : phase === 'loading' || result === 'won'
+                  ? 'Refreshing Event Contract state'
+                  : 'Press the big button to play again'}
         </div>
       </div>
     </div>
@@ -777,254 +1309,243 @@ function LuckyPosition({
 }
 
 function CandleHop({ onExit }: { onExit: () => void }) {
+  const reducedMotion = useReducedMotion()
   const [phase, setPhase] = useState<'title' | 'playing' | 'over'>('title')
   const [score, setScore] = useState(0)
+  const [result, setResult] = useState<{
+    score: number
+    isBest: boolean
+    badge: string | null
+  } | null>(null)
   const [best, setBest] = useState(() => {
     if (typeof window === 'undefined') return 0
     return Number(window.localStorage.getItem('pumpy:candle-hop:best') ?? 0)
   })
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const engineRef = useRef<SimpleCandleHop | null>(null)
+  const engineRef = useRef<CandleHopEngine | null>(null)
+  const bestRef = useRef(best)
+  const endRef = useRef<(score: number) => void>(() => {})
+  bestRef.current = best
+
+  endRef.current = (finalScore) => {
+    const previousBest = bestRef.current
+    const outcome = candleHopOutcome(finalScore, previousBest)
+    bestRef.current = outcome.best
+    setScore(finalScore)
+    setBest(outcome.best)
+    setResult(outcome)
+    setPhase('over')
+    window.localStorage.setItem('pumpy:candle-hop:best', String(outcome.best))
+    window.dispatchEvent(new CustomEvent('pumpy:profile-updated'))
+    hapticPattern(outcome.pattern)
+    if (outcome.isBest) {
+      achievementUnlock()
+      sound('win')
+    }
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const engine = new SimpleCandleHop(canvas, {
-      onScore: setScore,
-      onEnd: (finalScore) => {
-        setScore(finalScore)
-        setPhase('over')
-        setBest((current) => {
-          const next = Math.max(current, finalScore)
-          window.localStorage.setItem('pumpy:candle-hop:best', String(next))
-          return next
-        })
-        hapticPattern(finalScore > best ? 'achievement' : 'lose')
+    const engine = new CandleHopEngine(canvas, {
+      reduced: reducedMotion,
+      onScore: (nextScore) => {
+        setScore(nextScore)
+        haptic('low')
+        hopScore()
       },
+      onCrash: () => {
+        stopBgm()
+        hopLose()
+      },
+      onEnd: (finalScore) => endRef.current(finalScore),
     })
     engineRef.current = engine
-    return () => engine.destroy()
-  }, [best])
+    return () => {
+      engine.destroy()
+      stopBgm()
+    }
+  }, [reducedMotion])
 
   const start = useCallback(() => {
     setScore(0)
+    setResult(null)
     setPhase('playing')
+    hopResetCombo()
+    startBgm()
     engineRef.current?.start()
     haptic('high')
   }, [])
-  const jump = useCallback(() => {
-    engineRef.current?.jump()
+  const hop = useCallback(() => {
+    engineRef.current?.hop()
     haptic('low')
   }, [])
 
   useConsoleControls({
-    action1: phase === 'playing' ? null : { label: 'HOME', color: 'neutral', onPress: onExit },
-    main: phase === 'playing'
-      ? { label: 'HOP', color: 'amber', onPress: jump }
-      : { label: phase === 'over' ? 'PLAY AGAIN' : 'PLAY', color: 'amber', onPress: start },
+    action1:
+      phase === 'playing'
+        ? null
+        : { label: 'HOME', color: 'neutral', onPress: onExit },
+    main:
+      phase === 'playing'
+        ? { label: 'HOP', color: 'amber', onPress: hop }
+        : {
+            label: phase === 'over' ? 'PLAY AGAIN' : 'PLAY',
+            color: 'amber',
+            onPress: start,
+          },
     lightShow: phase === 'playing',
     status: { left: 'CANDLE HOP', right: `BEST ${best}` },
   })
 
   return (
     <GameScreen>
-      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
-      {phase === 'playing' && (
-        <div className={cnm('pointer-events-none absolute left-0 top-0', RIM, RIM_TOP)}>
-          <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">Score</div>
-          <div className="text-[38px] font-black leading-none text-text">{score}</div>
-        </div>
-      )}
-      {phase !== 'playing' && (
-        <div className={cnm('absolute inset-0 z-10 flex flex-col justify-center bg-black/92', RIM)}>
-          <CandlestickChart className="h-8 w-8 text-brand-500" />
-          <div className="mt-3 text-[38px] font-black uppercase leading-[0.92] text-text">Candle<br />Hop</div>
-          <p className="mt-3 max-w-[31ch] text-[13px] font-semibold leading-[1.4] text-text-2">
-            Tap the big button to pump through the candlestick gaps. One hit ends the run.
-          </p>
-          <div className="mt-5 font-mono text-[10px] font-black uppercase tracking-[0.14em] text-brand-500">
-            {phase === 'over' ? `Score ${score} · Best ${best}` : `Best ${best}`}
+      <GameStage
+        top={
+          phase === 'playing' ? (
+            <div className="pt-3">
+              <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
+                Score
+              </div>
+              <div className="text-[38px] font-black leading-none text-text tabular-nums">
+                {score}
+              </div>
+              <div className="mt-1 font-mono text-[9px] font-black uppercase tracking-[0.12em] text-text-3">
+                Best{' '}
+                <span className="text-text-2">{Math.max(best, score)}</span>
+              </div>
+            </div>
+          ) : null
+        }
+      >
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 block h-full w-full"
+        />
+      </GameStage>
+      <GameReadout>
+        <div className="flex items-center gap-3">
+          <CandlestickChart className="h-7 w-7 shrink-0 text-brand-500" />
+          <div>
+            <div className="text-[18px] font-black uppercase leading-none text-text">
+              Candle Hop
+            </div>
+            <div className="mt-1 font-mono text-[9px] font-bold uppercase tracking-[0.08em] text-text-2">
+              Tap the big button to fly
+            </div>
           </div>
         </div>
+      </GameReadout>
+      <ScreenCRT />
+      {phase === 'title' && <CandleHopTitle best={best} />}
+      {phase === 'over' && result && (
+        <CandleHopResult result={result} best={best} />
       )}
-      <div className={cnm('pointer-events-none absolute bottom-0 left-0 max-w-[62%]', RIM, RIM_BOTTOM)}>
-        <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">No funds</div>
-        <div className="mt-1 text-[17px] font-black uppercase text-text">Pure arcade warm-up</div>
-      </div>
     </GameScreen>
   )
 }
 
-class SimpleCandleHop {
-  private context: CanvasRenderingContext2D
-  private canvas: HTMLCanvasElement
-  private callbacks: { onScore: (score: number) => void; onEnd: (score: number) => void }
-  private observer: ResizeObserver
-  private raf = 0
-  private running = false
-  private width = 0
-  private height = 0
-  private y = 0.45
-  private velocity = 0
-  private score = 0
-  private last = 0
-  private obstacles: Array<{ x: number; gap: number; passed: boolean }> = []
+function CandleHopTitle({ best }: { best: number }) {
+  return (
+    <div className="absolute inset-0 z-20 flex flex-col justify-center bg-black/94 p-[var(--screen-rim,24px)] backdrop-blur-[1px]">
+      <div className="flex items-center gap-3">
+        <img
+          src="/pumpy-mark.svg"
+          alt=""
+          className="h-12 w-12 rounded-[14px]"
+        />
+        <div>
+          <div className="font-mono text-[9px] font-black uppercase tracking-[0.18em] text-brand-500">
+            Pumpy arcade
+          </div>
+          <h1 className="mt-1 text-[34px] font-black uppercase leading-none text-text">
+            Candle Hop
+          </h1>
+        </div>
+      </div>
+      <p className="mt-4 max-w-[82%] text-[13px] font-semibold leading-[1.4] text-text-2">
+        Tap to lift Pumpy, let it fall, and slip through the candle gaps. One
+        bad line ends the run.
+      </p>
+      <div className="mt-6 border-y border-white/10 py-4">
+        <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
+          Personal best
+        </div>
+        <div className="mt-1 text-[42px] font-black leading-none text-brand-500 tabular-nums">
+          {best}
+        </div>
+      </div>
+      <div className="mt-4 font-mono text-[10px] font-black uppercase tracking-[0.12em] text-text-3">
+        Press the <span className="text-brand-500">big button</span> to play
+      </div>
+    </div>
+  )
+}
 
-  constructor(canvas: HTMLCanvasElement, callbacks: { onScore: (score: number) => void; onEnd: (score: number) => void }) {
-    const context = canvas.getContext('2d')
-    if (!context) throw new Error('Canvas is unavailable')
-    this.canvas = canvas
-    this.context = context
-    this.callbacks = callbacks
-    this.observer = new ResizeObserver(() => this.measure())
-    this.observer.observe(canvas)
-    this.measure()
-    this.draw()
-  }
-
-  private measure() {
-    const rect = this.canvas.getBoundingClientRect()
-    if (!rect.width || !rect.height) return
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
-    this.width = rect.width
-    this.height = rect.height
-    this.canvas.width = Math.round(rect.width * dpr)
-    this.canvas.height = Math.round(rect.height * dpr)
-    this.context.setTransform(dpr, 0, 0, dpr, 0, 0)
-  }
-
-  start() {
-    this.y = 0.45
-    this.velocity = -0.9
-    this.score = 0
-    this.obstacles = []
-    for (let index = 0; index < 5; index++) {
-      this.obstacles.push({ x: this.width + 100 + index * 185, gap: 0.28 + Math.random() * 0.42, passed: false })
-    }
-    this.running = true
-    this.last = performance.now()
-    cancelAnimationFrame(this.raf)
-    this.raf = requestAnimationFrame(this.frame)
-  }
-
-  jump() {
-    if (this.running) this.velocity = -1.35
-  }
-
-  destroy() {
-    this.running = false
-    cancelAnimationFrame(this.raf)
-    this.observer.disconnect()
-  }
-
-  private frame = (now: number) => {
-    if (!this.running) return
-    let ended = false
-    const dt = Math.min(0.05, (now - this.last) / 1000)
-    this.last = now
-    this.velocity = Math.min(2.4, this.velocity + 5.2 * dt)
-    this.y += this.velocity * dt
-    const speed = 132 + Math.min(80, this.score * 4)
-    const playerX = this.width * 0.27
-    const playerY = this.y * this.height
-    const gapHalf = Math.max(48, this.height * 0.14)
-
-    for (const obstacle of this.obstacles) {
-      obstacle.x -= speed * dt
-      if (!obstacle.passed && obstacle.x < playerX) {
-        obstacle.passed = true
-        this.score += 1
-        this.callbacks.onScore(this.score)
-        haptic('low')
-      }
-      if (obstacle.x < -40) {
-        obstacle.x = Math.max(...this.obstacles.map((entry) => entry.x)) + 185
-        obstacle.gap = 0.25 + Math.random() * 0.5
-        obstacle.passed = false
-      }
-      const gapY = obstacle.gap * this.height
-      if (Math.abs(obstacle.x - playerX) < 25 && (playerY < gapY - gapHalf || playerY > gapY + gapHalf)) {
-        this.end()
-        ended = true
-        break
-      }
-    }
-    if (this.y < 0.05 || this.y > 0.95) {
-      this.end()
-      ended = true
-    }
-    this.draw()
-    if (!ended) this.raf = requestAnimationFrame(this.frame)
-  }
-
-  private end() {
-    if (!this.running) return
-    this.running = false
-    this.callbacks.onEnd(this.score)
-  }
-
-  private draw() {
-    const context = this.context
-    context.clearRect(0, 0, this.width, this.height)
-    context.fillStyle = '#000'
-    context.fillRect(0, 0, this.width, this.height)
-    context.strokeStyle = 'rgba(255,255,255,.055)'
-    context.lineWidth = 1
-    for (let x = 0; x < this.width; x += 28) {
-      context.beginPath()
-      context.moveTo(x, 0)
-      context.lineTo(x, this.height)
-      context.stroke()
-    }
-    for (let y = 0; y < this.height; y += 28) {
-      context.beginPath()
-      context.moveTo(0, y)
-      context.lineTo(this.width, y)
-      context.stroke()
-    }
-
-    const gapHalf = Math.max(48, this.height * 0.14)
-    for (const obstacle of this.obstacles) {
-      const gapY = obstacle.gap * this.height
-      context.fillStyle = '#ff5a4d'
-      context.fillRect(obstacle.x - 15, 0, 30, Math.max(0, gapY - gapHalf))
-      context.fillStyle = '#34d399'
-      context.fillRect(obstacle.x - 15, gapY + gapHalf, 30, this.height - gapY - gapHalf)
-      context.strokeStyle = '#f5f7fb'
-      context.beginPath()
-      context.moveTo(obstacle.x, Math.max(0, gapY - gapHalf - 14))
-      context.lineTo(obstacle.x, gapY - gapHalf)
-      context.moveTo(obstacle.x, gapY + gapHalf)
-      context.lineTo(obstacle.x, gapY + gapHalf + 14)
-      context.stroke()
-    }
-
-    const playerX = this.width * 0.27
-    const playerY = this.y * this.height
-    context.save()
-    context.translate(playerX, playerY)
-    context.rotate(Math.max(-0.35, Math.min(0.55, this.velocity * 0.18)))
-    context.fillStyle = '#b8ff4a'
-    context.shadowColor = '#b8ff4a'
-    context.shadowBlur = 18
-    context.beginPath()
-    context.arc(0, 0, 17, 0, Math.PI * 2)
-    context.fill()
-    context.shadowBlur = 0
-    context.fillStyle = '#101807'
-    context.font = '900 14px Gabarito, sans-serif'
-    context.textAlign = 'center'
-    context.textBaseline = 'middle'
-    context.fillText('P', 0, 1)
-    context.restore()
-  }
+function CandleHopResult({
+  result,
+  best,
+}: {
+  result: { score: number; isBest: boolean; badge: string | null }
+  best: number
+}) {
+  return (
+    <div className="absolute inset-0 z-20 flex flex-col justify-center overflow-hidden bg-black/95 p-[var(--screen-rim,24px)]">
+      {result.isBest && (
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(184,255,74,.18),transparent_42%)]" />
+      )}
+      <div className="welcome-pop relative">
+        <div
+          className={cnm(
+            'font-mono text-[10px] font-black uppercase tracking-[0.2em]',
+            result.isBest ? 'text-brand-500' : 'text-down',
+          )}
+        >
+          {result.isBest ? '★ New best' : 'Run over'}
+        </div>
+        <div className="mt-1 text-[58px] font-black leading-none text-text tabular-nums">
+          {result.score}
+        </div>
+        <div className="mt-1 font-mono text-[10px] font-black uppercase tracking-[0.12em] text-text-3">
+          Best {best}
+        </div>
+        {result.badge && (
+          <div className="mt-5 flex items-center gap-3 border-y border-brand-500/25 bg-brand-500/[0.06] py-3">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-full border border-brand-500/40 bg-brand-500/12 shadow-[0_0_22px_rgba(184,255,74,.16)]">
+              <img
+                src="/pumpy-mark.svg"
+                alt=""
+                className="h-9 w-9 rounded-[10px]"
+              />
+            </div>
+            <div>
+              <div className="font-mono text-[8px] font-black uppercase tracking-[0.16em] text-brand-500">
+                Badge unlocked
+              </div>
+              <div className="mt-1 text-[17px] font-black uppercase leading-none text-text">
+                {result.badge}
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="mt-6 font-mono text-[10px] font-black uppercase tracking-[0.12em] text-text-3">
+          Press the <span className="text-brand-500">big button</span> to play
+          again
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function Readout({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="font-mono text-[8px] font-black uppercase tracking-[0.12em] text-text-3">{label}</div>
-      <div className="mt-1 truncate font-mono text-[12px] font-black text-text">{value}</div>
+      <div className="font-mono text-[8px] font-black uppercase tracking-[0.12em] text-text-3">
+        {label}
+      </div>
+      <div className="mt-1 truncate font-mono text-[12px] font-black text-text">
+        {value}
+      </div>
     </div>
   )
 }
@@ -1037,11 +1558,32 @@ function quoteMultiplier(quote: PreparedPlayerTrade): number | undefined {
 function formatMoney(value: string | null): string {
   const parsed = Number(value ?? 0)
   if (!Number.isFinite(parsed)) return '—'
-  return parsed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  return parsed.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  })
+}
+
+function moneyFromRaw(value: bigint, decimals: number): string {
+  return formatMoney(formatUnits(value, decimals))
 }
 
 function shortId(value: string): string {
   return `${value.slice(0, 6)}…${value.slice(-4)}`
+}
+
+function useEventSeconds(expiresAtSeconds: number | null): number | null {
+  const [now, setNow] = useState(Date.now)
+
+  useEffect(() => {
+    if (expiresAtSeconds === null) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 250)
+    return () => window.clearInterval(timer)
+  }, [expiresAtSeconds])
+
+  if (expiresAtSeconds === null) return null
+  return eventSecondsRemaining(expiresAtSeconds, now)
 }
 
 function isWalletRejection(cause: unknown): boolean {

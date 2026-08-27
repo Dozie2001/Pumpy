@@ -56,7 +56,7 @@ export function createQuickCallRound(params: {
     orderHash: params.outcome.hash,
     requestedQuantityRaw: params.outcome.requestedQuantityRaw.toString(),
     filledQuantityRaw: params.outcome.filledQuantityRaw.toString(),
-    escrowRaw: params.trade.escrowRaw.toString(),
+    escrowRaw: params.outcome.filledCostRaw.toString(),
     submittedAt: params.now ?? Date.now(),
     claimHash: null,
     claimedAt: null,
@@ -160,8 +160,8 @@ export function deriveQuickCallSnapshot(params: {
   }
 
   if (params.round.claimedAt) return { ...base, phase: 'claimed' }
-  if (params.claimableRaw > 0n) return { ...base, phase: 'claimable' }
   if (params.voided) return { ...base, phase: 'voided' }
+  if (params.claimableRaw > 0n) return { ...base, phase: 'claimable' }
   if (winningOutcome !== null) {
     return {
       ...base,

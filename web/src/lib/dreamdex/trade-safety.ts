@@ -23,12 +23,32 @@ export function hasRequiredBotCommitment(
   return mode === 'quick-call' || botCommitmentVerified === true
 }
 
+export function filledOrderCostRaw(params: {
+  side: 'UP' | 'DOWN'
+  collateralDecimals: number
+  fills: ReadonlyArray<{ quantityFilled: bigint; fillPrice: bigint }>
+}): bigint {
+  const base = 10n ** BigInt(params.collateralDecimals)
+  return params.fills.reduce((total, fill) => {
+    const outcomePrice =
+      params.side === 'UP' ? fill.fillPrice : base - fill.fillPrice
+    const numerator = fill.quantityFilled * outcomePrice
+    return total + (numerator + base - 1n) / base
+  }, 0n)
+}
+
 export function classifyPlayerOrder(params: {
   orderId: bigint | null
   requestedQuantityRaw: bigint
   filledQuantityRaw: bigint
+  remainderCanRest?: boolean
 }): 'filled' | 'partial' | 'unfilled' | 'open' {
-  if (params.orderId !== null) return 'open'
+  if (
+    params.remainderCanRest &&
+    params.orderId !== null &&
+    params.filledQuantityRaw < params.requestedQuantityRaw
+  )
+    return 'open'
   if (params.filledQuantityRaw === 0n) return 'unfilled'
   if (params.filledQuantityRaw < params.requestedQuantityRaw) return 'partial'
   return 'filled'

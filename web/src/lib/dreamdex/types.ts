@@ -44,6 +44,8 @@ export type EventMarketsState = {
   phase: 'loading' | 'ready' | 'empty' | 'error'
   markets: Array<PumpyEventMarket>
   selected: PumpyEventMarket | null
+  closing: PumpyEventMarket | null
+  next: PumpyEventMarket | null
   quote: PumpyBookQuote | null
   connection: MarketConnection
   error: string | null
@@ -102,6 +104,7 @@ export type PlayerOrderOutcome = {
   orderId: bigint | null
   requestedQuantityRaw: bigint
   filledQuantityRaw: bigint
+  filledCostRaw: bigint
 }
 
 export type QuickCallRound = {

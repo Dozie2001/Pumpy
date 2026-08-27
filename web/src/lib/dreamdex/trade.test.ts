@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   PLAYER_QUOTE_TTL_MS,
   classifyPlayerOrder,
+  filledOrderCostRaw,
   hasRequiredBotCommitment,
   isPreparedTradeFresh,
   minimumMarketHeadroomSeconds,
@@ -55,6 +56,14 @@ describe('player trade safety', () => {
         requestedQuantityRaw: 100n,
         filledQuantityRaw: 0n,
       }),
+    ).toBe('unfilled')
+    expect(
+      classifyPlayerOrder({
+        orderId: 7n,
+        requestedQuantityRaw: 100n,
+        filledQuantityRaw: 40n,
+        remainderCanRest: true,
+      }),
     ).toBe('open')
   })
 
@@ -62,5 +71,15 @@ describe('player trade safety', () => {
     expect(hasRequiredBotCommitment('quick-call', undefined)).toBe(true)
     expect(hasRequiredBotCommitment('bot-battle', false)).toBe(false)
     expect(hasRequiredBotCommitment('bot-battle', true)).toBe(true)
+  })
+
+  it('records the actual filled cost for YES and NO outcomes', () => {
+    const fills = [{ quantityFilled: 8_000_000n, fillPrice: 625_000n }]
+    expect(
+      filledOrderCostRaw({ side: 'UP', collateralDecimals: 6, fills }),
+    ).toBe(5_000_000n)
+    expect(
+      filledOrderCostRaw({ side: 'DOWN', collateralDecimals: 6, fills }),
+    ).toBe(3_000_000n)
   })
 })

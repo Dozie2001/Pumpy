@@ -1,3 +1,4 @@
+import { minimumMarketHeadroomSeconds } from './trade-safety'
 import type {
   BinaryMarket,
   BinaryMarketStatus,
@@ -31,6 +32,14 @@ function lifecycleAt(
   }
 
   return STATUS_MAP[market.status]
+}
+
+function isTradingAt(market: PumpyEventMarket, nowSeconds: number): boolean {
+  return (
+    (market.status === 'trading' || market.status === 'upcoming') &&
+    market.tradingStartsAt <= nowSeconds &&
+    market.expiresAt > nowSeconds
+  )
 }
 
 export function normalizeBinaryMarket(
@@ -78,8 +87,9 @@ export function selectPumpyMarket(
       .filter(
         (market) =>
           market.asset === asset &&
-          (market.status === 'trading' || market.status === 'upcoming') &&
-          market.expiresAt > nowSeconds + 10,
+          isTradingAt(market, nowSeconds) &&
+          market.expiresAt >
+            nowSeconds + minimumMarketHeadroomSeconds(market.intervalSeconds),
       )
       .sort((a, b) => {
         // Pumpy's clearest arcade prompt is the opening-reference contract. This
@@ -89,6 +99,42 @@ export function selectPumpyMarket(
         }
         return a.expiresAt - b.expiresAt
       })[0] ?? null
+  )
+}
+
+export function selectClosingPumpyMarket(
+  markets: ReadonlyArray<PumpyEventMarket>,
+  asset: string,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+): PumpyEventMarket | null {
+  return (
+    markets
+      .filter(
+        (market) =>
+          market.asset === asset &&
+          isTradingAt(market, nowSeconds) &&
+          market.expiresAt > nowSeconds &&
+          market.expiresAt <=
+            nowSeconds + minimumMarketHeadroomSeconds(market.intervalSeconds),
+      )
+      .sort((a, b) => a.expiresAt - b.expiresAt)[0] ?? null
+  )
+}
+
+export function selectNextPumpyMarket(
+  markets: ReadonlyArray<PumpyEventMarket>,
+  asset: string,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+): PumpyEventMarket | null {
+  return (
+    markets
+      .filter(
+        (market) =>
+          market.asset === asset &&
+          market.status === 'upcoming' &&
+          market.tradingStartsAt > nowSeconds,
+      )
+      .sort((a, b) => a.tradingStartsAt - b.tradingStartsAt)[0] ?? null
   )
 }
 

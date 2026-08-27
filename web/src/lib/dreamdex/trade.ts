@@ -1,11 +1,12 @@
-import { ORDER_TYPE } from '@somnia-chain/markets-sdk'
-import { parseUnits } from 'viem'
+import { ContractRevertError, ORDER_TYPE } from '@somnia-chain/markets-sdk'
+import { erc20Abi, maxUint256, parseUnits } from 'viem'
 
 import { getDreamDexExchange } from './client'
 import { SHANNON_CHAIN_ID } from './network'
 import {
   PLAYER_QUOTE_TTL_MS,
   classifyPlayerOrder,
+  filledOrderCostRaw,
   hasRequiredBotCommitment,
   isPreparedTradeFresh,
   minimumMarketHeadroomSeconds,
@@ -32,9 +33,11 @@ export class PlayerTradeError extends Error {
       | 'INSUFFICIENT_BALANCE'
       | 'STALE_QUOTE'
       | 'WRONG_NETWORK'
-      | 'WALLET_CHANGED',
+      | 'WALLET_CHANGED'
+      | 'ORDER_REJECTED',
+    options?: ErrorOptions,
   ) {
-    super(message)
+    super(message, options)
     this.name = 'PlayerTradeError'
   }
 }
@@ -113,6 +116,7 @@ export async function placePreparedPlayerTrade(params: {
   wallet: PlayerWalletSession
   mode: PumpyGameMode
   botCommitmentVerified?: boolean
+  onWalletStep?: (step: 'approving' | 'refreshing' | 'placing') => void
 }): Promise<PlayerOrderOutcome> {
   if (!hasRequiredBotCommitment(params.mode, params.botCommitmentVerified)) {
     throw new Error(
@@ -144,7 +148,7 @@ export async function placePreparedPlayerTrade(params: {
     )
   }
 
-  const exactRefreshed = await preparePlayerTradeRaw({
+  let exactRefreshed = await preparePlayerTradeRaw({
     market: params.market,
     side: params.trade.side,
     stakeRaw: params.trade.stakeRaw,
@@ -163,6 +167,53 @@ export async function placePreparedPlayerTrade(params: {
     )
   }
 
+  const client = getDreamDexExchange().client
+  const allowance = await client.getErc20Allowance(
+    exactRefreshed.collateralAddress,
+    params.wallet.address,
+    exactRefreshed.poolAddress,
+  )
+  if (allowance < exactRefreshed.escrowRaw) {
+    params.onWalletStep?.('approving')
+    const approvalHash = await params.wallet.walletClient.writeContract({
+      account: params.wallet.address,
+      chain: params.wallet.walletClient.chain,
+      address: exactRefreshed.collateralAddress,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [exactRefreshed.poolAddress, maxUint256],
+    })
+    const approvalReceipt = await client
+      .getViemClient()
+      .waitForTransactionReceipt({ hash: approvalHash })
+    if (approvalReceipt.status !== 'success') {
+      throw new PlayerTradeError(
+        `The ${exactRefreshed.collateralSymbol} approval reverted`,
+        'ORDER_REJECTED',
+      )
+    }
+
+    params.onWalletStep?.('refreshing')
+    exactRefreshed = await preparePlayerTradeRaw({
+      market: params.market,
+      side: params.trade.side,
+      stakeRaw: params.trade.stakeRaw,
+      account: params.wallet.address,
+    })
+    if (!sameExecutionTerms(params.trade, exactRefreshed)) {
+      throw new PlayerTradeError(
+        'Collateral was approved, but the live odds changed; review the updated quote before signing the order',
+        'STALE_QUOTE',
+      )
+    }
+    if (exactRefreshed.hasEnoughBalance === false) {
+      throw new PlayerTradeError(
+        `Not enough ${params.trade.collateralSymbol} for this trade`,
+        'INSUFFICIENT_BALANCE',
+      )
+    }
+  }
+
   const nowSeconds = Math.floor(Date.now() / 1_000)
   const orderExpirySeconds = Math.min(
     exactRefreshed.marketExpiresAt - 1,
@@ -175,20 +226,32 @@ export async function placePreparedPlayerTrade(params: {
     )
   }
 
-  const trader = getDreamDexExchange().client.createTrader({
+  const trader = client.createTrader({
     walletClient: params.wallet.walletClient,
     decimals: exactRefreshed.collateralDecimals,
   })
-  const result = await trader.placeOrder({
-    pool: exactRefreshed.poolAddress,
-    side: exactRefreshed.orderSide,
-    price: exactRefreshed.yesLimitPriceRaw,
-    quantity: exactRefreshed.quantityRaw,
-    collateral: exactRefreshed.collateralAddress,
-    expireTimestampNs: BigInt(orderExpirySeconds) * 1_000_000_000n,
-    orderType: ORDER_TYPE.MARKET,
-    autoApprove: true,
-  })
+  params.onWalletStep?.('placing')
+  let result: Awaited<ReturnType<typeof trader.placeOrder>>
+  try {
+    result = await trader.placeOrder({
+      pool: exactRefreshed.poolAddress,
+      side: exactRefreshed.orderSide,
+      price: exactRefreshed.yesLimitPriceRaw,
+      quantity: exactRefreshed.quantityRaw,
+      collateral: exactRefreshed.collateralAddress,
+      expireTimestampNs: BigInt(orderExpirySeconds) * 1_000_000_000n,
+      orderType: ORDER_TYPE.MARKET,
+      autoApprove: false,
+    })
+  } catch (cause) {
+    if (isWalletRejection(cause)) throw cause
+    throw await classifyPlacementFailure({
+      cause,
+      market: params.market,
+      trade: exactRefreshed,
+      account: params.wallet.address,
+    })
+  }
 
   const filledQuantityRaw = result.fills.reduce(
     (total, fill) => total + fill.quantityFilled,
@@ -198,6 +261,12 @@ export async function placePreparedPlayerTrade(params: {
     orderId: result.orderId ?? null,
     requestedQuantityRaw: exactRefreshed.quantityRaw,
     filledQuantityRaw,
+    remainderCanRest: false,
+  })
+  const filledCostRaw = filledOrderCostRaw({
+    side: exactRefreshed.side,
+    collateralDecimals: exactRefreshed.collateralDecimals,
+    fills: result.fills,
   })
 
   return {
@@ -206,7 +275,83 @@ export async function placePreparedPlayerTrade(params: {
     orderId: result.orderId ?? null,
     requestedQuantityRaw: exactRefreshed.quantityRaw,
     filledQuantityRaw,
+    filledCostRaw,
   }
+}
+
+async function classifyPlacementFailure(params: {
+  cause: unknown
+  market: PumpyEventMarket
+  trade: PreparedPlayerTrade
+  account: Address
+}): Promise<PlayerTradeError> {
+  const errorName = findContractErrorName(params.cause)
+  if (
+    errorName === 'ERC20InsufficientAllowance' ||
+    errorName === 'ERC20InsufficientBalance' ||
+    errorName === 'InsufficientBalance'
+  ) {
+    return new PlayerTradeError(
+      `Not enough approved ${params.trade.collateralSymbol} for this trade`,
+      'INSUFFICIENT_BALANCE',
+      { cause: params.cause },
+    )
+  }
+
+  try {
+    const latest = await preparePlayerTradeRaw({
+      market: params.market,
+      side: params.trade.side,
+      stakeRaw: params.trade.stakeRaw,
+      account: params.account,
+    })
+    if (!sameExecutionTerms(params.trade, latest)) {
+      return new PlayerTradeError(
+        'The live book changed before the order landed; review the updated quote',
+        'STALE_QUOTE',
+        { cause: params.cause },
+      )
+    }
+  } catch (diagnostic) {
+    if (diagnostic instanceof PlayerTradeError) {
+      return new PlayerTradeError(diagnostic.message, diagnostic.code, {
+        cause: params.cause,
+      })
+    }
+  }
+
+  console.error('[Pumpy] DreamDEX placement rejected', {
+    sdkError: errorName ?? null,
+    message:
+      params.cause instanceof Error
+        ? params.cause.message
+        : String(params.cause),
+    marketId: params.market.marketId,
+    pool: params.trade.poolAddress,
+    side: params.trade.side,
+    quoteObservedAt: params.trade.observedAt,
+    marketExpiresAt: params.trade.marketExpiresAt,
+  })
+  return new PlayerTradeError(
+    'DreamDEX rejected the order without exposing a contract reason. No position was opened; refresh and try the next live quote.',
+    'ORDER_REJECTED',
+    { cause: params.cause },
+  )
+}
+
+function findContractErrorName(cause: unknown): string | undefined {
+  if (!cause || typeof cause !== 'object') return undefined
+  if (cause instanceof ContractRevertError) return cause.errorName
+  if ('errorName' in cause && typeof cause.errorName === 'string') {
+    return cause.errorName
+  }
+  return 'cause' in cause ? findContractErrorName(cause.cause) : undefined
+}
+
+function isWalletRejection(cause: unknown): boolean {
+  if (!cause || typeof cause !== 'object') return false
+  if ('code' in cause && cause.code === 4_001) return true
+  return 'cause' in cause ? isWalletRejection(cause.cause) : false
 }
 
 async function preparePlayerTradeRaw(params: {

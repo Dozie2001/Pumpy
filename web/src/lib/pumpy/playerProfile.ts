@@ -58,7 +58,8 @@ export function readPlayerProfile(
       parsed.version !== PROFILE_VERSION ||
       parsed.account?.toLowerCase() !== account.toLowerCase() ||
       !Array.isArray(parsed.plays)
-    ) return empty
+    )
+      return empty
     return { ...empty, plays: parsed.plays.filter(isPlayRecord).slice(0, 100) }
   } catch {
     return empty
@@ -81,15 +82,18 @@ export function recordPlayerTrade(params: {
     side: params.trade.side,
     collateralSymbol: params.trade.collateralSymbol,
     collateralDecimals: params.trade.collateralDecimals,
-    premiumRaw: params.trade.escrowRaw.toString(),
-    payoutRaw: params.trade.quantityRaw.toString(),
+    premiumRaw: params.outcome.filledCostRaw.toString(),
+    payoutRaw: params.outcome.filledQuantityRaw.toString(),
     filledQuantityRaw: params.outcome.filledQuantityRaw.toString(),
     status: params.outcome.status,
     submittedAt: params.now ?? Date.now(),
   }
   const next: PumpyPlayerProfile = {
     ...current,
-    plays: [record, ...current.plays.filter((play) => play.id !== record.id)].slice(0, 100),
+    plays: [
+      record,
+      ...current.plays.filter((play) => play.id !== record.id),
+    ].slice(0, 100),
   }
   params.storage.setItem(playerProfileKey(params.account), JSON.stringify(next))
   if (typeof window !== 'undefined') {
@@ -99,7 +103,10 @@ export function recordPlayerTrade(params: {
 }
 
 export function profileVolumeRaw(profile: PumpyPlayerProfile): bigint {
-  return profile.plays.reduce((total, play) => total + BigInt(play.premiumRaw), 0n)
+  return profile.plays.reduce(
+    (total, play) => total + BigInt(play.premiumRaw),
+    0n,
+  )
 }
 
 export function profileAchievements(
@@ -108,7 +115,8 @@ export function profileAchievements(
 ): PumpyAchievement[] {
   const sides = new Set(profile.plays.map((play) => play.side))
   const volume = profile.plays.reduce(
-    (total, play) => total + Number(play.premiumRaw) / 10 ** play.collateralDecimals,
+    (total, play) =>
+      total + Number(play.premiumRaw) / 10 ** play.collateralDecimals,
     0,
   )
   return [

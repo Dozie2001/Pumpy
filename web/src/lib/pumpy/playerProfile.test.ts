@@ -5,7 +5,11 @@ import {
   readPlayerProfile,
   recordPlayerTrade,
 } from './playerProfile'
-import type { PlayerOrderOutcome, PreparedPlayerTrade, PumpyEventMarket } from '@/lib/dreamdex/types'
+import type {
+  PlayerOrderOutcome,
+  PreparedPlayerTrade,
+  PumpyEventMarket,
+} from '@/lib/dreamdex/types'
 
 const account = '0x1111111111111111111111111111111111111111' as const
 const market: PumpyEventMarket = {
@@ -60,6 +64,7 @@ function outcome(byte: string): PlayerOrderOutcome {
     orderId: 1n,
     requestedQuantityRaw: 8_000_000n,
     filledQuantityRaw: 8_000_000n,
+    filledCostRaw: 5_000_000n,
   }
 }
 
@@ -74,9 +79,30 @@ function storage() {
 describe('Pumpy player profile', () => {
   it('records wallet-signed fills newest first and deduplicates by transaction', () => {
     const store = storage()
-    recordPlayerTrade({ storage: store, account, market, trade: trade('UP'), outcome: outcome('a'), now: 1 })
-    recordPlayerTrade({ storage: store, account, market, trade: trade('DOWN'), outcome: outcome('b'), now: 2 })
-    recordPlayerTrade({ storage: store, account, market, trade: trade('DOWN'), outcome: outcome('b'), now: 3 })
+    recordPlayerTrade({
+      storage: store,
+      account,
+      market,
+      trade: trade('UP'),
+      outcome: outcome('a'),
+      now: 1,
+    })
+    recordPlayerTrade({
+      storage: store,
+      account,
+      market,
+      trade: trade('DOWN'),
+      outcome: outcome('b'),
+      now: 2,
+    })
+    recordPlayerTrade({
+      storage: store,
+      account,
+      market,
+      trade: trade('DOWN'),
+      outcome: outcome('b'),
+      now: 3,
+    })
 
     const profile = readPlayerProfile(store, account)
     expect(profile.plays).toHaveLength(2)
@@ -85,13 +111,36 @@ describe('Pumpy player profile', () => {
 
   it('derives achievements from actual fills and arcade score', () => {
     const store = storage()
-    recordPlayerTrade({ storage: store, account, market, trade: trade('UP'), outcome: outcome('a') })
-    recordPlayerTrade({ storage: store, account, market, trade: trade('DOWN'), outcome: outcome('b') })
+    recordPlayerTrade({
+      storage: store,
+      account,
+      market,
+      trade: trade('UP'),
+      outcome: outcome('a'),
+    })
+    recordPlayerTrade({
+      storage: store,
+      account,
+      market,
+      trade: trade('DOWN'),
+      outcome: outcome('b'),
+    })
 
-    const achievements = profileAchievements(readPlayerProfile(store, account), 6)
-    expect(achievements.find((badge) => badge.id === 'two-way-player')?.unlocked).toBe(true)
-    expect(achievements.find((badge) => badge.id === 'volume-ten')?.unlocked).toBe(true)
-    expect(achievements.find((badge) => badge.id === 'candle-five')?.unlocked).toBe(true)
-    expect(achievements.find((badge) => badge.id === 'candle-twenty')?.unlocked).toBe(false)
+    const achievements = profileAchievements(
+      readPlayerProfile(store, account),
+      6,
+    )
+    expect(
+      achievements.find((badge) => badge.id === 'two-way-player')?.unlocked,
+    ).toBe(true)
+    expect(
+      achievements.find((badge) => badge.id === 'volume-ten')?.unlocked,
+    ).toBe(true)
+    expect(
+      achievements.find((badge) => badge.id === 'candle-five')?.unlocked,
+    ).toBe(true)
+    expect(
+      achievements.find((badge) => badge.id === 'candle-twenty')?.unlocked,
+    ).toBe(false)
   })
 })

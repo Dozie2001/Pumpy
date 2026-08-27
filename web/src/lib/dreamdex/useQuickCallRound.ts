@@ -134,7 +134,11 @@ export function useQuickCallRound(params: {
   const claim = useCallback(async () => {
     const { round, snapshot } = stateRef.current
     if (!round || !snapshot || !params.session) return
-    if (snapshot.phase !== 'claimable' || snapshot.claimableRaw <= 0n) return
+    if (
+      (snapshot.phase !== 'claimable' && snapshot.phase !== 'voided') ||
+      snapshot.claimableRaw <= 0n
+    )
+      return
     setState((current) => ({ ...current, phase: 'claiming', error: null }))
     try {
       const trader = getDreamDexExchange().client.createTrader({

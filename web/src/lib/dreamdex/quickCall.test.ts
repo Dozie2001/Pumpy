@@ -34,6 +34,7 @@ const outcome = {
   hash: `0x${'66'.repeat(32)}`,
   requestedQuantityRaw: 8_000_000n,
   filledQuantityRaw: 8_000_000n,
+  filledCostRaw: 4_800_000n,
 } as PlayerOrderOutcome
 
 describe('Quick Call persistence and reconciliation', () => {
@@ -53,6 +54,7 @@ describe('Quick Call persistence and reconciliation', () => {
     writeQuickCallRound(storage, round)
     expect(readQuickCallRound(storage, address)).toEqual(round)
     expect(round.filledQuantityRaw).toBe('8000000')
+    expect(round.escrowRaw).toBe('4800000')
   })
 
   it('ignores malformed browser storage instead of hydrating it', () => {
@@ -99,6 +101,7 @@ describe('Quick Call persistence and reconciliation', () => {
     expect(snapshot({ claimableRaw: 8n, winningOutcome: 0 }).phase).toBe(
       'claimable',
     )
+    expect(snapshot({ claimableRaw: 8n, voided: true }).phase).toBe('voided')
     expect(snapshot({ positionRaw: 8n, winningOutcome: 1 }).phase).toBe('lost')
     expect(snapshot({ round: { ...round, claimedAt: 5 } }).phase).toBe(
       'claimed',

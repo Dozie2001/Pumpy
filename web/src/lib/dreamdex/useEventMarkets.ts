@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { discoverEventMarkets, watchEventMarket } from './adapter'
-import { selectPumpyMarket } from './normalize'
+import {
+  selectClosingPumpyMarket,
+  selectNextPumpyMarket,
+  selectPumpyMarket,
+} from './normalize'
 import type {
   EventMarketsState,
   MarketConnection,
@@ -13,39 +17,66 @@ const DISCOVERY_REFRESH_MS = 15_000
 const STALE_AFTER_MS = 35_000
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'DreamDEX market discovery failed'
+  return error instanceof Error
+    ? error.message
+    : 'DreamDEX market discovery failed'
 }
 
 export function useEventMarkets(asset: string): EventMarketsState {
-  const [markets, setMarkets] = useState<PumpyEventMarket[]>([])
+  const [markets, setMarkets] = useState<Array<PumpyEventMarket>>([])
   const [phase, setPhase] = useState<EventMarketsState['phase']>('loading')
   const [error, setError] = useState<string | null>(null)
   const [quote, setQuote] = useState<PumpyBookQuote | null>(null)
   const [connection, setConnection] = useState<MarketConnection>('indexer')
   const [refreshToken, setRefreshToken] = useState(0)
+  const [nowSeconds, setNowSeconds] = useState(() =>
+    Math.floor(Date.now() / 1_000),
+  )
 
-  const refresh = useCallback(async (showLoading = false) => {
-    if (showLoading) setPhase('loading')
-    try {
-      const next = await discoverEventMarkets()
-      setMarkets(next)
-      setPhase(next.length > 0 ? 'ready' : 'empty')
-      setError(null)
-    } catch (cause) {
-      setError(errorMessage(cause))
-      setPhase((current) => (markets.length > 0 ? current : 'error'))
-    }
-  }, [markets.length])
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setNowSeconds(Math.floor(Date.now() / 1_000)),
+      1_000,
+    )
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const refresh = useCallback(
+    async (showLoading = false) => {
+      if (showLoading) setPhase('loading')
+      try {
+        const next = await discoverEventMarkets()
+        setMarkets(next)
+        setPhase(next.length > 0 ? 'ready' : 'empty')
+        setError(null)
+      } catch (cause) {
+        setError(errorMessage(cause))
+        setPhase((current) => (markets.length > 0 ? current : 'error'))
+      }
+    },
+    [markets.length],
+  )
 
   useEffect(() => {
     void refresh(true)
-    const interval = window.setInterval(() => void refresh(), DISCOVERY_REFRESH_MS)
+    const interval = window.setInterval(
+      () => void refresh(),
+      DISCOVERY_REFRESH_MS,
+    )
     return () => window.clearInterval(interval)
   }, [refresh, refreshToken])
 
   const selected = useMemo(
-    () => selectPumpyMarket(markets, asset),
-    [asset, markets],
+    () => selectPumpyMarket(markets, asset, nowSeconds),
+    [asset, markets, nowSeconds],
+  )
+  const closing = useMemo(
+    () => selectClosingPumpyMarket(markets, asset, nowSeconds),
+    [asset, markets, nowSeconds],
+  )
+  const next = useMemo(
+    () => selectNextPumpyMarket(markets, asset, nowSeconds),
+    [asset, markets, nowSeconds],
   )
 
   useEffect(() => {
@@ -92,6 +123,8 @@ export function useEventMarkets(asset: string): EventMarketsState {
     phase: phase === 'ready' && !selected ? 'empty' : phase,
     markets,
     selected,
+    closing,
+    next,
     quote,
     connection,
     error,

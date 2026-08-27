@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { normalizeBinaryMarket, selectPumpyMarket } from './normalize'
+import {
+  normalizeBinaryMarket,
+  selectClosingPumpyMarket,
+  selectNextPumpyMarket,
+  selectPumpyMarket,
+} from './normalize'
 import type { BinaryMarket } from '@somnia-chain/markets-sdk'
 
 const NOW = 1_787_343_000
@@ -127,5 +132,43 @@ describe('DreamDEX binary market normalization', () => {
     expect(selectPumpyMarket([fixedStrike, opening], 'BTC', NOW)).toEqual(
       opening,
     )
+  })
+
+  it('never selects a market inside the same safety window used by placement', () => {
+    const closing = normalizeBinaryMarket(
+      binaryMarket({ expiry: String(NOW + 80), intervalSec: '900' }),
+      NOW,
+    )
+    const successor = normalizeBinaryMarket(
+      binaryMarket({
+        marketId: `0x${'40'.repeat(32)}`,
+        poolAddress: `0x${'41'.repeat(20)}`,
+        expiry: String(NOW + 900),
+        intervalSec: '900',
+      }),
+      NOW,
+    )
+
+    expect(selectPumpyMarket([closing, successor], 'BTC', NOW)).toEqual(
+      successor,
+    )
+    expect(selectClosingPumpyMarket([closing, successor], 'BTC', NOW)).toEqual(
+      closing,
+    )
+  })
+
+  it('exposes the next listed round without allowing it to be traded early', () => {
+    const upcoming = normalizeBinaryMarket(
+      binaryMarket({
+        status: 'Listed',
+        tradingStart: String(NOW + 30),
+        expiry: String(NOW + 930),
+      }),
+      NOW,
+    )
+
+    expect(selectPumpyMarket([upcoming], 'BTC', NOW)).toBeNull()
+    expect(selectNextPumpyMarket([upcoming], 'BTC', NOW)).toEqual(upcoming)
+    expect(selectPumpyMarket([upcoming], 'BTC', NOW + 31)).toEqual(upcoming)
   })
 })
