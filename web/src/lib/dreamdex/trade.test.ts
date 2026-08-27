@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   PLAYER_QUOTE_TTL_MS,
   classifyPlayerOrder,
+  hasRequiredBotCommitment,
   isPreparedTradeFresh,
   minimumMarketHeadroomSeconds,
 } from './trade-safety'
@@ -55,5 +56,11 @@ describe('player trade safety', () => {
         filledQuantityRaw: 0n,
       }),
     ).toBe('open')
+  })
+
+  it('proof-gates Bot Battle without blocking bot-free Quick Call', () => {
+    expect(hasRequiredBotCommitment('quick-call', undefined)).toBe(true)
+    expect(hasRequiredBotCommitment('bot-battle', false)).toBe(false)
+    expect(hasRequiredBotCommitment('bot-battle', true)).toBe(true)
   })
 })

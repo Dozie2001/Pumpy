@@ -6,6 +6,7 @@ import { SHANNON_CHAIN_ID } from './network'
 import {
   PLAYER_QUOTE_TTL_MS,
   classifyPlayerOrder,
+  hasRequiredBotCommitment,
   isPreparedTradeFresh,
   minimumMarketHeadroomSeconds,
 } from './trade-safety'
@@ -16,6 +17,7 @@ import type {
   PlayerWalletSession,
   PreparedPlayerTrade,
   PumpyEventMarket,
+  PumpyGameMode,
 } from './types'
 
 export class PlayerTradeError extends Error {
@@ -109,9 +111,10 @@ export async function placePreparedPlayerTrade(params: {
   trade: PreparedPlayerTrade
   market: PumpyEventMarket
   wallet: PlayerWalletSession
-  botCommitmentVerified: boolean
+  mode: PumpyGameMode
+  botCommitmentVerified?: boolean
 }): Promise<PlayerOrderOutcome> {
-  if (!params.botCommitmentVerified) {
+  if (!hasRequiredBotCommitment(params.mode, params.botCommitmentVerified)) {
     throw new Error(
       'A verified on-chain bot commitment is required before the player trade',
     )

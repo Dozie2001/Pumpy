@@ -74,6 +74,8 @@ export type PlayerWalletState = {
 
 export type PlayerSide = 'UP' | 'DOWN'
 
+export type PumpyGameMode = 'quick-call' | 'bot-battle'
+
 export type PreparedPlayerTrade = {
   marketId: Hex
   poolAddress: Address
@@ -100,4 +102,29 @@ export type PlayerOrderOutcome = {
   orderId: bigint | null
   requestedQuantityRaw: bigint
   filledQuantityRaw: bigint
+}
+
+export type QuickCallRound = {
+  version: 1
+  account: Address
+  marketId: Hex
+  poolAddress: Address
+  marketAddress: Address
+  asset: string
+  question: string
+  side: PlayerSide
+  outcomeIndex: 0 | 1
+  collateralSymbol: string
+  collateralDecimals: number
+  operatorId: number | null
+  venueId: Hex | null
+  expiresAt: number
+  orderStatus: PlayerOrderOutcome['status']
+  orderHash: Hash
+  requestedQuantityRaw: string
+  filledQuantityRaw: string
+  escrowRaw: string
+  submittedAt: number
+  claimHash: Hash | null
+  claimedAt: number | null
 }

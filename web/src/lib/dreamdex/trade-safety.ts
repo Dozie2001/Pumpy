@@ -1,4 +1,4 @@
-import type { PreparedPlayerTrade } from './types'
+import type { PreparedPlayerTrade, PumpyGameMode } from './types'
 
 export const PLAYER_QUOTE_TTL_MS = 12_000
 
@@ -14,6 +14,13 @@ export function isPreparedTradeFresh(
   nowMs = Date.now(),
 ): boolean {
   return nowMs <= trade.validUntil
+}
+
+export function hasRequiredBotCommitment(
+  mode: PumpyGameMode,
+  botCommitmentVerified: boolean | undefined,
+): boolean {
+  return mode === 'quick-call' || botCommitmentVerified === true
 }
 
 export function classifyPlayerOrder(params: {
