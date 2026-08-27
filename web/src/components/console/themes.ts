@@ -44,6 +44,54 @@ export const DEFAULT_THEME: ConsoleTheme = {
   cardSub: 'rgba(232,240,244,0.66)',
 }
 
+export const PUMPY_THEMES: ReadonlyArray<ConsoleTheme> = [
+  DEFAULT_THEME,
+  {
+    id: 'pumpy-coral',
+    code: '002',
+    name: 'Hot Signal',
+    body: '#22191d',
+    back: '#140f12',
+    ambient: '#11080c',
+    knob: '#ff7c72',
+    main: '#ff7c72',
+    action: '#382329',
+    pills: '#382329',
+    glow: '#ffc857',
+    bezelInk: '#ff9b92',
+    label: '#b9a1a6',
+    logo: '#ff7c72',
+    logoEyes: '#ffc857',
+    cardBg: '#22191d',
+    cardInk: '#ff9b92',
+    cardSub: 'rgba(244,224,229,0.66)',
+  },
+  {
+    id: 'pumpy-glacier',
+    code: '003',
+    name: 'Cold Wallet',
+    body: '#172027',
+    back: '#0d151b',
+    ambient: '#071016',
+    knob: '#58dbff',
+    main: '#58dbff',
+    action: '#263641',
+    pills: '#263641',
+    glow: '#b8ff4a',
+    bezelInk: '#8ae6ff',
+    label: '#9bb1bd',
+    logo: '#58dbff',
+    logoEyes: '#b8ff4a',
+    cardBg: '#172027',
+    cardInk: '#8ae6ff',
+    cardSub: 'rgba(222,239,247,0.66)',
+  },
+]
+
+export function findPumpyTheme(id: string | null | undefined): ConsoleTheme {
+  return PUMPY_THEMES.find((theme) => theme.id === id) ?? DEFAULT_THEME
+}
+
 export function themeBackdrop(theme: ConsoleTheme): string {
   return theme.ambient ?? '#07090f'
 }

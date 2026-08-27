@@ -265,6 +265,10 @@ html[data-ios-standalone] .viewport-fill {
 /* ── Material recipes (docs/DESIGN.md §5) ───────────────────────────────
    One place for the signature surfaces so screens stay clean. */
 @layer components {
+  .pumpy-menu-rise {
+    animation: pumpy-menu-rise 420ms var(--ease-out-expo) both;
+  }
+
   /* The signature card: opaque black molded material with a soft bevel. */
   .card-neo {
     background:
@@ -806,6 +810,23 @@ html[data-ios-standalone] .viewport-fill {
   .hw3d-toggle:is(:disabled, [aria-disabled='true']) {
     cursor: not-allowed;
     opacity: 0.5;
+  }
+}
+
+@keyframes pumpy-menu-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18%) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pumpy-menu-rise {
+    animation-duration: 1ms;
   }
 }
 

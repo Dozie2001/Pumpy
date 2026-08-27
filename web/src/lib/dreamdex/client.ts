@@ -1,4 +1,5 @@
 import {
+  SOMNIA_TESTNET_PRICE_FEED,
   SOMNIA_TESTNET_ADDRESSES,
   SomniaMarkets,
 } from '@somnia-chain/markets-sdk'
@@ -14,6 +15,7 @@ export function getDreamDexExchange(): SomniaMarkets {
     chain: dreamdexNetwork.chain,
     indexerUrl: dreamdexNetwork.indexerUrl,
     wsRpcUrl: dreamdexNetwork.webSocketRpcUrl,
+    priceFeed: SOMNIA_TESTNET_PRICE_FEED,
     addresses: {
       ...SOMNIA_TESTNET_ADDRESSES,
       marketCreator: dreamdexNetwork.marketCreatorAddress as Address,

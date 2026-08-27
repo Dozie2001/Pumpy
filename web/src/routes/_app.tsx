@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Component } from 'react'
+import { Component, useEffect, useState } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { AppFrame } from '@/components/console/AppFrame'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
@@ -7,21 +7,50 @@ import {
   ConsoleControlsProvider,
   useConsoleView,
 } from '@/components/console/controls'
-import { DEFAULT_THEME, themeBackdrop } from '@/components/console/themes'
-import { PumpyExperience } from '@/components/pumpy/PumpyExperience'
+import {
+  DEFAULT_THEME,
+  findPumpyTheme,
+  themeBackdrop,
+} from '@/components/console/themes'
+import type { ConsoleTheme } from '@/components/console/themes'
+import { PumpyMenuDrawer } from '@/components/menu/PumpyMenuDrawer'
+import { PumpyArcade } from '@/components/pumpy/PumpyArcade'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 export const Route = createFileRoute('/_app')({ component: PumpyApp })
 
 function PumpyApp() {
   const reducedMotion = useReducedMotion()
+  const [homeSignal, setHomeSignal] = useState(0)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [theme, setTheme] = useState<ConsoleTheme>(DEFAULT_THEME)
+
+  useEffect(() => {
+    setTheme(findPumpyTheme(window.localStorage.getItem('pumpy:theme')))
+  }, [])
+
+  const chooseTheme = (next: ConsoleTheme) => {
+    setTheme(next)
+    window.localStorage.setItem('pumpy:theme', next.id)
+  }
 
   return (
-    <AppFrame bg={themeBackdrop(DEFAULT_THEME)}>
+    <AppFrame bg={themeBackdrop(theme)}>
       <ConsoleControlsProvider>
-        <PumpyConsole reducedMotion={reducedMotion}>
-          <PumpyExperience />
+        <PumpyConsole
+          reducedMotion={reducedMotion}
+          theme={theme}
+          onMenu={() => setMenuOpen(true)}
+          onHome={() => setHomeSignal((value) => value + 1)}
+        >
+          <PumpyArcade homeSignal={homeSignal} />
         </PumpyConsole>
+        <PumpyMenuDrawer
+          open={menuOpen}
+          onClose={() => setMenuOpen(false)}
+          theme={theme}
+          onTheme={chooseTheme}
+        />
       </ConsoleControlsProvider>
     </AppFrame>
   )
@@ -30,16 +59,27 @@ function PumpyApp() {
 function PumpyConsole({
   children,
   reducedMotion,
+  theme,
+  onMenu,
+  onHome,
 }: {
   children: ReactNode
   reducedMotion: boolean
+  theme: ConsoleTheme
+  onMenu: () => void
+  onHome: () => void
 }) {
   const { view, handlers } = useConsoleView()
 
   return (
     <ConsoleBoundary
       fallback={
-        <PumpyDeviceFallback view={view} handlers={handlers}>
+        <PumpyDeviceFallback
+          view={view}
+          handlers={handlers}
+          onMenu={onMenu}
+          onHome={onHome}
+        >
           {children}
         </PumpyDeviceFallback>
       }
@@ -47,9 +87,13 @@ function PumpyConsole({
       <ConsoleCanvas
         view={view}
         handlers={handlers}
-        theme={DEFAULT_THEME}
+        theme={theme}
         reducedMotion={reducedMotion}
         instant
+        onNav={(tab) => {
+          if (tab === 'MENU') onMenu()
+          else onHome()
+        }}
       >
         {children}
       </ConsoleCanvas>
@@ -80,10 +124,14 @@ function PumpyDeviceFallback({
   children,
   view,
   handlers,
+  onMenu,
+  onHome,
 }: {
   children: ReactNode
   view: ReturnType<typeof useConsoleView>['view']
   handlers: ReturnType<typeof useConsoleView>['handlers']
+  onMenu: () => void
+  onHome: () => void
 }) {
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-canvas p-3 sm:p-8">
@@ -100,20 +148,42 @@ function PumpyDeviceFallback({
           {children}
         </div>
 
+        <div className="grid grid-cols-2 gap-2 px-1 pt-2.5">
+          <button
+            type="button"
+            data-tour-anchor="menu"
+            onClick={onMenu}
+            className="min-h-8 rounded-full border border-white/10 bg-[#252f34] font-mono text-[9px] font-black uppercase tracking-[0.12em] text-[#d9e1e5]"
+          >
+            Menu
+          </button>
+          <button
+            type="button"
+            data-tour-anchor="home"
+            onClick={onHome}
+            className="min-h-8 rounded-full border border-white/10 bg-[#252f34] font-mono text-[9px] font-black uppercase tracking-[0.12em] text-[#d9e1e5]"
+          >
+            Games
+          </button>
+        </div>
+
         <div className="grid grid-cols-[1fr_1fr_88px] gap-2.5 px-1 pb-2 pt-3">
           <FallbackButton
+            anchor="action1"
             label={view.action1?.label || 'UP'}
             tone={view.action1?.color}
             onClick={() => handlers.current.action1?.()}
             disabled={!view.action1}
           />
           <FallbackButton
+            anchor="action2"
             label={view.action2?.label || 'DOWN'}
             tone={view.action2?.color}
             onClick={() => handlers.current.action2?.()}
             disabled={!view.action2}
           />
           <FallbackButton
+            anchor="play"
             label={view.main?.label || 'PLAY'}
             tone={view.main?.color || 'amber'}
             onClick={() => handlers.current.main?.()}
@@ -122,11 +192,11 @@ function PumpyDeviceFallback({
           />
         </div>
         <div className="flex items-center justify-between px-3 pb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-[#8fa0a7]">
-          <span>{view.knob?.label || 'RIVAL'}</span>
+          <span>{view.knob?.label || 'GAME'}</span>
           <span>
             {view.numberWheel
               ? `${view.numberWheel.format?.(view.numberWheel.value) || view.numberWheel.value} ${view.numberWheel.label || ''}`
-              : 'PLAYER VS BOT'}
+              : 'PUMPY OS'}
           </span>
         </div>
       </div>
@@ -136,12 +206,14 @@ function PumpyDeviceFallback({
 
 function FallbackButton({
   label,
+  anchor,
   tone,
   onClick,
   disabled,
   tall = false,
 }: {
   label: string
+  anchor: 'play' | 'action1' | 'action2'
   tone?: 'amber' | 'up' | 'down' | 'neutral'
   onClick: () => void
   disabled: boolean
@@ -159,6 +231,7 @@ function FallbackButton({
   return (
     <button
       type="button"
+      data-tour-anchor={anchor}
       disabled={disabled}
       onClick={onClick}
       className={`min-h-12 rounded-[18px] border px-2 text-[11px] font-black uppercase tracking-[0.08em] focus-visible:ring-2 focus-visible:ring-white disabled:opacity-35 ${tall ? 'row-span-2 min-h-[66px]' : ''} ${toneClass}`}
