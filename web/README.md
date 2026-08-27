@@ -1,19 +1,22 @@
 # Pumpy web
 
-The mobile 3D handheld and accessible DOM fallback for Pumpy, a
-player-versus-bot prediction arcade powered by DreamDEX Event Contracts on
-Somnia Shannon testnet.
+The mobile 3D handheld and accessible DOM fallback for Pumpy, a game-first
+prediction arcade powered by DreamDEX Event Contracts on Somnia Shannon
+testnet.
 
 ## Local development
 
 ```bash
+cd ..
 cp .env.example .env
+cd web
 bun install
 bun run dev
 ```
 
-Open `http://localhost:3200`. The public Shannon and DreamDEX read endpoints are
-already present in `.env.example`; no private key is needed for market discovery.
+Open `http://localhost:3200` for the public landing page, then enter the console
+at `/play`. The public Shannon and DreamDEX read endpoints are already present
+in the root `.env.example`; no private key is needed for market discovery.
 
 ## Checks
 
@@ -25,7 +28,8 @@ bun run build
 
 ## Source boundaries
 
-- `src/components/pumpy/`: player-versus-bot screens and product components
+- `src/components/pumpy/`: funded games, arcade games, and position screens
+- `src/components/landing/`: public game-first product story
 - `src/components/console/`: preserved handheld rendering and controls
 - `src/lib/dreamdex/`: typed Somnia/DreamDEX adapter boundary
 - `src/lib/audio.ts` and `src/lib/haptics.ts`: reusable feedback engines
