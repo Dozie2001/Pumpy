@@ -18,6 +18,8 @@ export type PumpyEventMarket = {
   oracleQuestion: string | null
   reference: 'opening-price' | 'fixed-strike'
   strikeRaw: string
+  /** Raw oracle value for the actual line this market resolves against. */
+  targetPriceRaw: string | null
   status: PumpyMarketStatus
   tradingStartsAt: number
   expiresAt: number
@@ -107,6 +109,31 @@ export type PlayerOrderOutcome = {
   filledCostRaw: bigint
 }
 
+export type PreparedPlayerCashout = {
+  marketId: Hex
+  poolAddress: Address
+  side: PlayerSide
+  orderSide: 'SELL_YES' | 'SELL_NO'
+  positionRaw: bigint
+  quantityRaw: bigint
+  fillableQuantityRaw: bigint
+  yesLimitPriceRaw: bigint
+  outcomeLimitPriceRaw: bigint
+  estimatedProceedsRaw: bigint
+  collateralDecimals: number
+  observedAt: number
+  validUntil: number
+  marketExpiresAt: number
+}
+
+export type PlayerCashoutOutcome = {
+  status: 'filled' | 'partial' | 'unfilled'
+  hash: Hash
+  requestedQuantityRaw: bigint
+  filledQuantityRaw: bigint
+  proceedsRaw: bigint
+}
+
 export type QuickCallRound = {
   version: 1
   account: Address
@@ -122,6 +149,10 @@ export type QuickCallRound = {
   operatorId: number | null
   venueId: Hex | null
   expiresAt: number
+  intervalSeconds: number | null
+  reference: 'opening-price' | 'fixed-strike'
+  strikeRaw: string
+  targetPriceRaw: string | null
   orderStatus: PlayerOrderOutcome['status']
   orderHash: Hash
   requestedQuantityRaw: string
@@ -130,4 +161,7 @@ export type QuickCallRound = {
   submittedAt: number
   claimHash: Hash | null
   claimedAt: number | null
+  cashoutHash: Hash | null
+  cashoutProceedsRaw: string | null
+  cashedOutAt: number | null
 }

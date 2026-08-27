@@ -11,12 +11,20 @@ const STORAGE_PREFIX = 'pumpy:quick-call:v1'
 
 export type QuickCallChainSnapshot = {
   phase:
-    'indexing' | 'live' | 'claimable' | 'won' | 'lost' | 'voided' | 'claimed'
+    | 'indexing'
+    | 'live'
+    | 'claimable'
+    | 'won'
+    | 'lost'
+    | 'voided'
+    | 'claimed'
+    | 'cashed-out'
   positionRaw: bigint
   claimableRaw: bigint
   estimatedPayoutRaw: bigint
   winningOutcome: 0 | 1 | null
   resolutionHash: Hash | null
+  targetPriceRaw: string | null
 }
 
 export function quickCallStorageKey(account: Address): string {
@@ -52,6 +60,10 @@ export function createQuickCallRound(params: {
     operatorId: params.market.operatorId,
     venueId: params.market.venueId,
     expiresAt: params.market.expiresAt,
+    intervalSeconds: params.market.intervalSeconds,
+    reference: params.market.reference,
+    strikeRaw: params.market.strikeRaw,
+    targetPriceRaw: params.market.targetPriceRaw,
     orderStatus: params.outcome.status,
     orderHash: params.outcome.hash,
     requestedQuantityRaw: params.outcome.requestedQuantityRaw.toString(),
@@ -60,6 +72,9 @@ export function createQuickCallRound(params: {
     submittedAt: params.now ?? Date.now(),
     claimHash: null,
     claimedAt: null,
+    cashoutHash: null,
+    cashoutProceedsRaw: null,
+    cashedOutAt: null,
   }
 }
 
@@ -111,6 +126,16 @@ function isStoredQuickCallRound(
     (candidate.operatorId === null || Number.isInteger(candidate.operatorId)) &&
     (candidate.venueId === null || isBytes32(candidate.venueId)) &&
     typeof candidate.expiresAt === 'number' &&
+    (candidate.intervalSeconds === undefined ||
+      candidate.intervalSeconds === null ||
+      typeof candidate.intervalSeconds === 'number') &&
+    (candidate.reference === undefined ||
+      candidate.reference === 'opening-price' ||
+      candidate.reference === 'fixed-strike') &&
+    (candidate.strikeRaw === undefined || isRawAmount(candidate.strikeRaw)) &&
+    (candidate.targetPriceRaw === undefined ||
+      candidate.targetPriceRaw === null ||
+      isRawAmount(candidate.targetPriceRaw)) &&
     (candidate.orderStatus === 'filled' ||
       candidate.orderStatus === 'partial') &&
     isBytes32(candidate.orderHash) &&
@@ -120,7 +145,16 @@ function isStoredQuickCallRound(
     isRawAmount(candidate.escrowRaw) &&
     typeof candidate.submittedAt === 'number' &&
     (candidate.claimHash === null || isBytes32(candidate.claimHash)) &&
-    (candidate.claimedAt === null || typeof candidate.claimedAt === 'number')
+    (candidate.claimedAt === null || typeof candidate.claimedAt === 'number') &&
+    (candidate.cashoutHash === undefined ||
+      candidate.cashoutHash === null ||
+      isBytes32(candidate.cashoutHash)) &&
+    (candidate.cashoutProceedsRaw === undefined ||
+      candidate.cashoutProceedsRaw === null ||
+      isRawAmount(candidate.cashoutProceedsRaw)) &&
+    (candidate.cashedOutAt === undefined ||
+      candidate.cashedOutAt === null ||
+      typeof candidate.cashedOutAt === 'number')
   )
 }
 
@@ -146,6 +180,7 @@ export function deriveQuickCallSnapshot(params: {
   winningOutcome: number | null
   voided: boolean
   resolutionHash: string | null
+  targetPriceRaw?: string | null
 }): QuickCallChainSnapshot {
   const winningOutcome: 0 | 1 | null =
     params.winningOutcome === 0 || params.winningOutcome === 1
@@ -157,8 +192,11 @@ export function deriveQuickCallSnapshot(params: {
     estimatedPayoutRaw: params.estimatedPayoutRaw,
     winningOutcome,
     resolutionHash: params.resolutionHash as Hash | null,
+    targetPriceRaw:
+      params.targetPriceRaw ?? params.round.targetPriceRaw ?? null,
   }
 
+  if (params.round.cashedOutAt) return { ...base, phase: 'cashed-out' }
   if (params.round.claimedAt) return { ...base, phase: 'claimed' }
   if (params.voided) return { ...base, phase: 'voided' }
   if (params.claimableRaw > 0n) return { ...base, phase: 'claimable' }

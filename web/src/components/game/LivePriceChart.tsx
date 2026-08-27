@@ -4,6 +4,7 @@ import type {
   LiveAssetPriceState,
   PumpyPricePoint,
 } from '@/lib/dreamdex/useLiveAssetPrice'
+import type { PlayerSide } from '@/lib/dreamdex/types'
 import { cnm } from '@/utils/style'
 
 const WINDOW_MS = 30_000
@@ -21,16 +22,24 @@ export function LivePriceChart({
   state,
   className,
   eventCountdown,
+  targetPrice,
+  side,
 }: {
   state: LiveAssetPriceState
   className?: string
   eventCountdown?: string | null
+  targetPrice?: number | null
+  side?: PlayerSide | null
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const pointsRef = useRef(state.points)
   const targetPriceRef = useRef(state.price)
+  const marketTargetRef = useRef(targetPrice)
+  const sideRef = useRef(side)
   pointsRef.current = state.points
   targetPriceRef.current = state.price
+  marketTargetRef.current = targetPrice
+  sideRef.current = side
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -68,6 +77,7 @@ export function LivePriceChart({
       const delta = Math.min(64, now - lastFrame)
       lastFrame = now
       const targetPrice = targetPriceRef.current
+      const marketTarget = marketTargetRef.current
       const points = pointsRef.current
       const reducedMotion = window.matchMedia(
         '(prefers-reduced-motion: reduce)',
@@ -87,6 +97,7 @@ export function LivePriceChart({
       const plotted = visible.length ? visible : points.slice(-30)
       const prices = plotted.map((point) => point.price)
       if (displayedPrice > 0) prices.push(displayedPrice)
+      if (marketTarget != null && marketTarget > 0) prices.push(marketTarget)
 
       if (prices.length) {
         const low = Math.min(...prices)
@@ -146,6 +157,20 @@ export function LivePriceChart({
               plotHeight,
         }
 
+        if (marketTarget != null && marketTarget > 0) {
+          const targetY =
+            TOP_PAD +
+            ((range.max - marketTarget) / (range.max - range.min)) * plotHeight
+          drawMarketTarget(
+            context,
+            targetY,
+            width,
+            marketTarget,
+            sideRef.current,
+            displayedPrice,
+          )
+        }
+
         if (!chartPoints.length || chartPoints.at(-1)?.x !== tip.x)
           chartPoints.push(tip)
         else chartPoints[chartPoints.length - 1] = tip
@@ -188,9 +213,9 @@ export function LivePriceChart({
         ref={canvasRef}
         className="absolute inset-0 z-[1] h-full w-full"
         aria-label={
-          state.price == null
-            ? 'Waiting for live oracle price'
-            : `${state.asset} live oracle chart at ${state.price.toFixed(2)} dollars`
+        state.price == null
+          ? 'Waiting for live oracle price'
+            : `${state.asset} live oracle chart at ${state.price.toFixed(2)} dollars${targetPrice ? `; target ${targetPrice.toFixed(2)} dollars` : ''}`
         }
       />
       <div className="pointer-events-none absolute inset-x-[var(--screen-rim,24px)] top-2 z-10 flex items-center">
@@ -213,6 +238,53 @@ export function LivePriceChart({
       </div>
     </div>
   )
+}
+
+function drawMarketTarget(
+  context: CanvasRenderingContext2D,
+  y: number,
+  width: number,
+  targetPrice: number,
+  side: PlayerSide | null | undefined,
+  livePrice: number,
+) {
+  const winning = side
+    ? side === 'UP'
+      ? livePrice >= targetPrice
+      : livePrice < targetPrice
+    : null
+  const color = winning === false ? 'rgb(255, 107, 116)' : 'rgb(184, 255, 74)'
+  const label = `TARGET ${formatChartPrice(targetPrice)}`
+
+  context.save()
+  context.setLineDash([5, 4])
+  context.strokeStyle = color
+  context.globalAlpha = 0.72
+  context.lineWidth = 1
+  context.beginPath()
+  context.moveTo(0, y)
+  context.lineTo(width, y)
+  context.stroke()
+  context.setLineDash([])
+
+  context.font = '700 8px ui-monospace, SFMono-Regular, monospace'
+  const labelWidth = context.measureText(label).width + 12
+  const labelY = Math.max(2, Math.min(y - 16, 58))
+  context.globalAlpha = 0.92
+  context.fillStyle = 'rgb(7, 9, 15)'
+  context.fillRect(5, labelY, labelWidth, 14)
+  context.strokeStyle = color
+  context.strokeRect(5.5, labelY + 0.5, labelWidth - 1, 13)
+  context.fillStyle = color
+  context.fillText(label, 11, labelY + 10)
+  context.restore()
+}
+
+function formatChartPrice(price: number): string {
+  return `$${price.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
 }
 
 function trendDirection(

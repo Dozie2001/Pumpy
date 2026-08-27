@@ -25,18 +25,30 @@ function readCollateralMetadata(address: Address): Promise<Erc20Metadata> {
 }
 
 export async function discoverEventMarkets(): Promise<Array<PumpyEventMarket>> {
-  const rows = await getDreamDexExchange().client.listLiveBinaryMarkets({
+  const client = getDreamDexExchange().client
+  const rows = await client.listLiveBinaryMarkets({
     limit: DISCOVERY_LIMIT,
     orderBy: 'closingSoon',
   })
   const nowSeconds = Math.floor(Date.now() / 1_000)
+  const openingIds = rows
+    .filter((row) => row.strike === '0')
+    .map((row) => row.marketId)
+  const openingPrices = openingIds.length
+    ? await client.getOpeningPrices(openingIds).catch(() => ({}))
+    : {}
 
   const normalized = await Promise.all(
     rows.map(async (row) => {
       const metadata = await readCollateralMetadata(row.collateral).catch(
         () => undefined,
       )
-      return normalizeBinaryMarket(row, nowSeconds, metadata)
+      return normalizeBinaryMarket(
+        row,
+        nowSeconds,
+        metadata,
+        openingPrices[row.marketId.toLowerCase()] ?? null,
+      )
     }),
   )
 
@@ -79,7 +91,7 @@ export async function watchEventMarket(
       market: normalizeBinaryMarket(liveMarket, undefined, {
         symbol: market.collateralSymbol,
         decimals: market.collateralDecimals,
-      }),
+      }, market.reference === 'opening-price' ? market.targetPriceRaw : null),
       quote: {
         yesAsk: book.yesAsks[0]
           ? probabilityFromRaw(book.yesAsks[0].price, liveMarket.quoteDecimals)

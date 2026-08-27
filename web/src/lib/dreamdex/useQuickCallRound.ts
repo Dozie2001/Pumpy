@@ -10,6 +10,7 @@ import {
 } from './quickCall'
 import type { QuickCallChainSnapshot } from './quickCall'
 import type {
+  PlayerCashoutOutcome,
   PlayerOrderOutcome,
   PlayerWalletSession,
   PreparedPlayerTrade,
@@ -84,6 +85,12 @@ export function useQuickCallRound(params: {
         winningOutcome: event?.winningOutcome ?? null,
         voided: event?.voided === true,
         resolutionHash: event?.txHash ?? null,
+        targetPriceRaw:
+          round.reference === 'fixed-strike'
+            ? round.strikeRaw
+            : (resolution?.openingAnswer?.numericValue ??
+              round.targetPriceRaw ??
+              null),
       })
       setState({ round, snapshot, phase: 'ready', error: null })
     } catch (cause) {
@@ -178,6 +185,36 @@ export function useQuickCallRound(params: {
     }
   }, [params.session])
 
+  const recordCashout = useCallback(
+    (outcome: PlayerCashoutOutcome) => {
+      const round = stateRef.current.round
+      if (
+        !round ||
+        outcome.status !== 'filled' ||
+        outcome.filledQuantityRaw < BigInt(round.filledQuantityRaw) ||
+        typeof window === 'undefined'
+      )
+        return
+      const cashedOut: QuickCallRound = {
+        ...round,
+        cashoutHash: outcome.hash,
+        cashoutProceedsRaw: outcome.proceedsRaw.toString(),
+        cashedOutAt: Date.now(),
+      }
+      writeQuickCallRound(window.localStorage, cashedOut)
+      setState((current) => ({
+        ...current,
+        round: cashedOut,
+        snapshot: current.snapshot
+          ? { ...current.snapshot, positionRaw: 0n, phase: 'cashed-out' }
+          : null,
+        phase: 'ready',
+        error: null,
+      }))
+    },
+    [],
+  )
+
   const clear = useCallback(() => {
     if (params.address && typeof window !== 'undefined') {
       removeQuickCallRound(window.localStorage, params.address)
@@ -190,6 +227,7 @@ export function useQuickCallRound(params: {
     recordOrder,
     refresh: reconcile,
     claim,
+    recordCashout,
     clear,
   }
 }

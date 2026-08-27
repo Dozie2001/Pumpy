@@ -39,6 +39,11 @@ import { TestCollateralCard } from '@/components/pumpy/PumpyExperience'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useEventMarkets } from '@/lib/dreamdex/useEventMarkets'
 import { useLiveAssetPrice } from '@/lib/dreamdex/useLiveAssetPrice'
+import {
+  isCallCurrentlyWinning,
+  resolveOracleTargetPrice,
+} from '@/lib/dreamdex/oracleTarget'
+import { usePlayerCashout } from '@/lib/dreamdex/usePlayerCashout'
 import { usePlayerQuote } from '@/lib/dreamdex/usePlayerQuote'
 import { usePlayerWallet } from '@/lib/dreamdex/usePlayerWallet'
 import { useQuickCallRound } from '@/lib/dreamdex/useQuickCallRound'
@@ -57,6 +62,7 @@ import {
   hopResetCombo,
   hopScore,
   luckyLose,
+  luckyCashout,
   luckyWin,
   slotPick,
   slotSpin,
@@ -136,6 +142,13 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
   const quickCall = useQuickCallRound({
     address: wallet.address,
     session: wallet.session,
+  })
+  const cashout = usePlayerCashout({
+    round: quickCall.round,
+    positionRaw: quickCall.snapshot?.positionRaw ?? 0n,
+    session: wallet.session,
+    enabled:
+      screen === 'position' && quickCall.snapshot?.phase === 'live',
   })
   const testCollateral = useTestCollateral({ market, wallet })
   const quote = usePlayerQuote({
@@ -334,6 +347,19 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     }
   }, [go, luckyPhase, market, quote, quickCall, side, testCollateral, wallet])
 
+  const performCashout = useCallback(async () => {
+    const outcome = await cashout.cashOut()
+    if (!outcome) return
+    if (outcome.status === 'filled') {
+      quickCall.recordCashout(outcome)
+      void testCollateral.refresh()
+      hapticPattern('cashOut')
+      luckyCashout()
+    } else {
+      void quickCall.refresh()
+    }
+  }, [cashout, quickCall, testCollateral])
+
   const controls = useMemo<ConsoleControls>(() => {
     if (screen === 'hub') {
       return {
@@ -454,26 +480,53 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
       const canPlayAgain =
         result === 'lost' ||
         result === 'claimed' ||
+        result === 'cashed-out' ||
         (result === 'voided' && !canClaim)
+      const cashoutBusy =
+        cashout.phase === 'approving' ||
+        cashout.phase === 'refreshing' ||
+        cashout.phase === 'submitting'
+      const canCashout =
+        result === 'live' &&
+        cashout.phase === 'ready' &&
+        cashout.fullExitAvailable
       return {
         action1: { label: 'HOME', color: 'neutral', onPress: () => go('hub') },
         action2: {
-          label: 'REFRESH',
+          label: result === 'live' ? 'EXIT QUOTE' : 'REFRESH',
           color: 'neutral',
-          onPress: () => void quickCall.refresh(),
+          onPress: () =>
+            result === 'live'
+              ? void cashout.refresh()
+              : void quickCall.refresh(),
         },
         main: {
           label: canClaim
             ? 'CLAIM'
             : canPlayAgain
               ? 'PLAY AGAIN'
-              : 'CHECK CHAIN',
-          color: canClaim || canPlayAgain ? 'amber' : 'neutral',
+              : result === 'live'
+                ? cashout.phase === 'approving'
+                  ? 'AUTHORIZE'
+                  : cashout.phase === 'refreshing'
+                    ? 'REPRICE'
+                    : cashout.phase === 'submitting'
+                      ? 'CASHING OUT'
+                      : canCashout
+                        ? 'CASH OUT'
+                        : 'REFRESH EXIT'
+                : 'CHECK CHAIN',
+          color:
+            canClaim || canPlayAgain || canCashout ? 'amber' : 'neutral',
           loading:
-            quickCall.phase === 'loading' || quickCall.phase === 'claiming',
+            quickCall.phase === 'loading' ||
+            quickCall.phase === 'claiming' ||
+            cashoutBusy,
           onPress: () => {
             if (canClaim) void quickCall.claim()
             else if (canPlayAgain) playAgain()
+            else if (canCashout) void performCashout()
+            else if (result === 'live') void cashout.refresh()
             else void quickCall.refresh()
           },
         },
@@ -501,9 +554,11 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     spin,
     stakeIndex,
     submit,
+    cashout,
     walletStep,
     wallet.status,
     playAgain,
+    performCashout,
   ])
 
   if (screen === 'candle-hop') {
@@ -562,6 +617,8 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           phase={quickCall.phase}
           error={quickCall.error}
           livePrice={livePrice}
+          cashout={cashout}
+          onCashout={performCashout}
           onRefresh={quickCall.refresh}
         />
       )}

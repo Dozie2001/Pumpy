@@ -1,4 +1,8 @@
-import { ContractRevertError, ORDER_TYPE } from '@somnia-chain/markets-sdk'
+import {
+  ContractRevertError,
+  ORDER_TYPE,
+  erc6909Abi,
+} from '@somnia-chain/markets-sdk'
 import { erc20Abi, maxUint256, parseUnits } from 'viem'
 
 import { getDreamDexExchange } from './client'
@@ -13,13 +17,40 @@ import {
 } from './trade-safety'
 import type { Address } from 'viem'
 import type {
+  PlayerCashoutOutcome,
   PlayerOrderOutcome,
   PlayerSide,
   PlayerWalletSession,
+  PreparedPlayerCashout,
   PreparedPlayerTrade,
   PumpyEventMarket,
   PumpyGameMode,
+  QuickCallRound,
 } from './types'
+
+const CASHOUT_QUOTE_TTL_MS = 8_000
+
+export class PlayerCashoutError extends Error {
+  constructor(
+    message: string,
+    readonly code:
+      | 'BOOK_NOT_LIVE'
+      | 'MARKET_NOT_TRADING'
+      | 'MARKET_CHANGED'
+      | 'MARKET_CLOSING'
+      | 'NO_LIQUIDITY'
+      | 'PARTIAL_LIQUIDITY'
+      | 'NO_POSITION'
+      | 'STALE_QUOTE'
+      | 'WRONG_NETWORK'
+      | 'WALLET_CHANGED'
+      | 'ORDER_REJECTED',
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+    this.name = 'PlayerCashoutError'
+  }
+}
 
 export class PlayerTradeError extends Error {
   constructor(
@@ -94,6 +125,255 @@ export async function preparePlayerTrade(params: {
     stakeRaw: parseUnits(params.stake, params.market.collateralDecimals),
     account: params.account,
   })
+}
+
+export async function preparePlayerCashout(params: {
+  round: QuickCallRound
+  positionRaw: bigint
+}): Promise<PreparedPlayerCashout> {
+  if (params.positionRaw <= 0n) {
+    throw new PlayerCashoutError('No open position is available to sell', 'NO_POSITION')
+  }
+  try {
+    assertLiveBook(params.round.poolAddress)
+  } catch (cause) {
+    throw new PlayerCashoutError(
+      'The DreamDEX exit book is not live yet',
+      'BOOK_NOT_LIVE',
+      { cause },
+    )
+  }
+
+  const orderSide = params.round.side === 'UP' ? 'SELL_YES' : 'SELL_NO'
+  const quote = await getDreamDexExchange().client.quoteBinarySell({
+    marketId: params.round.marketId,
+    side: orderSide,
+    quantity: params.positionRaw,
+  })
+  if (!quote || quote.fillableQuantity <= 0n) {
+    throw new PlayerCashoutError(
+      'No executable cash-out liquidity is available right now',
+      'NO_LIQUIDITY',
+    )
+  }
+
+  const observedAt = Date.now()
+  return {
+    marketId: params.round.marketId,
+    poolAddress: params.round.poolAddress,
+    side: params.round.side,
+    orderSide,
+    positionRaw: params.positionRaw,
+    quantityRaw: quote.quantity,
+    fillableQuantityRaw: quote.fillableQuantity,
+    yesLimitPriceRaw: quote.yesPrice,
+    outcomeLimitPriceRaw: quote.limitPrice,
+    estimatedProceedsRaw: quote.estProceeds,
+    collateralDecimals: params.round.collateralDecimals,
+    observedAt,
+    validUntil: observedAt + CASHOUT_QUOTE_TTL_MS,
+    marketExpiresAt: params.round.expiresAt,
+  }
+}
+
+function sameCashoutTerms(
+  previous: PreparedPlayerCashout,
+  next: PreparedPlayerCashout,
+): boolean {
+  return (
+    previous.marketId === next.marketId &&
+    previous.orderSide === next.orderSide &&
+    previous.quantityRaw === next.quantityRaw &&
+    previous.fillableQuantityRaw === next.fillableQuantityRaw &&
+    previous.yesLimitPriceRaw === next.yesLimitPriceRaw &&
+    previous.estimatedProceedsRaw === next.estimatedProceedsRaw
+  )
+}
+
+export async function placePreparedPlayerCashout(params: {
+  cashout: PreparedPlayerCashout
+  round: QuickCallRound
+  wallet: PlayerWalletSession
+  onWalletStep?: (step: 'approving' | 'refreshing' | 'placing') => void
+}): Promise<PlayerCashoutOutcome> {
+  const client = getDreamDexExchange().client
+  const activeChainId = await params.wallet.walletClient.getChainId()
+  if (
+    params.wallet.chainId !== SHANNON_CHAIN_ID ||
+    activeChainId !== SHANNON_CHAIN_ID
+  ) {
+    throw new PlayerCashoutError(
+      'Switch your wallet to Somnia Shannon Testnet',
+      'WRONG_NETWORK',
+    )
+  }
+  if (Date.now() > params.cashout.validUntil) {
+    throw new PlayerCashoutError(
+      'The cash-out quote expired; review the new amount',
+      'STALE_QUOTE',
+    )
+  }
+
+  const accounts = await params.wallet.walletClient.getAddresses()
+  if (accounts[0]?.toLowerCase() !== params.wallet.address.toLowerCase()) {
+    throw new PlayerCashoutError(
+      'The active wallet account changed',
+      'WALLET_CHANGED',
+    )
+  }
+
+  const onchain = await client.getMarketOnchain(params.round.marketId)
+  if (onchain.pool.toLowerCase() !== params.round.poolAddress.toLowerCase()) {
+    throw new PlayerCashoutError(
+      'This pool has rolled over to a different market',
+      'MARKET_CHANGED',
+    )
+  }
+  if (onchain.status !== 1) {
+    throw new PlayerCashoutError(
+      'This Event Contract is no longer trading',
+      'MARKET_NOT_TRADING',
+    )
+  }
+  const nowSeconds = Math.floor(Date.now() / 1_000)
+  const cashoutHeadroom = Math.max(
+    8,
+    Math.min(
+      30,
+      minimumMarketHeadroomSeconds(params.round.intervalSeconds ?? null),
+    ),
+  )
+  if (Number(onchain.expiry) - nowSeconds <= cashoutHeadroom) {
+    throw new PlayerCashoutError(
+      'This market is too close to lock for a safe cash out',
+      'MARKET_CLOSING',
+    )
+  }
+
+  const outcomeId = params.round.outcomeIndex === 0 ? onchain.yesId : onchain.noId
+  const positionRaw = await client.getOutcomeBalance({
+    outcomeToken: onchain.outcomeToken,
+    account: params.wallet.address,
+    id: outcomeId,
+  })
+  if (positionRaw < params.cashout.quantityRaw) {
+    throw new PlayerCashoutError(
+      'Your live outcome balance changed; refresh the cash-out quote',
+      'STALE_QUOTE',
+    )
+  }
+
+  let refreshed = await preparePlayerCashout({
+    round: params.round,
+    positionRaw: params.cashout.quantityRaw,
+  })
+  if (!sameCashoutTerms(params.cashout, refreshed)) {
+    throw new PlayerCashoutError(
+      'The exit price changed; review the new cash-out amount',
+      'STALE_QUOTE',
+    )
+  }
+  if (refreshed.fillableQuantityRaw < refreshed.quantityRaw) {
+    throw new PlayerCashoutError(
+      'The live book cannot absorb the full position yet',
+      'PARTIAL_LIQUIDITY',
+    )
+  }
+
+  const publicClient = client.getViemClient()
+  const isOperator = await publicClient.readContract({
+    address: onchain.outcomeToken,
+    abi: erc6909Abi,
+    functionName: 'isOperator',
+    args: [params.wallet.address, params.round.poolAddress],
+  })
+  if (!isOperator) {
+    params.onWalletStep?.('approving')
+    const approvalHash = await params.wallet.walletClient.writeContract({
+      account: params.wallet.address,
+      chain: params.wallet.walletClient.chain,
+      address: onchain.outcomeToken,
+      abi: erc6909Abi,
+      functionName: 'setOperator',
+      args: [params.round.poolAddress, true],
+    })
+    const approvalReceipt = await publicClient.waitForTransactionReceipt({
+      hash: approvalHash,
+    })
+    if (approvalReceipt.status !== 'success') {
+      throw new PlayerCashoutError(
+        'The one-time position authorization reverted',
+        'ORDER_REJECTED',
+      )
+    }
+    params.onWalletStep?.('refreshing')
+    refreshed = await preparePlayerCashout({
+      round: params.round,
+      positionRaw: params.cashout.quantityRaw,
+    })
+    if (!sameCashoutTerms(params.cashout, refreshed)) {
+      throw new PlayerCashoutError(
+        'Position access was approved, but the exit price changed; review the updated cash-out amount',
+        'STALE_QUOTE',
+      )
+    }
+  }
+
+  const orderExpirySeconds = Math.min(
+    Number(onchain.expiry) - 1,
+    Math.floor(Date.now() / 1_000) + 60,
+  )
+  const trader = client.createTrader({
+    walletClient: params.wallet.walletClient,
+    decimals: params.round.collateralDecimals,
+  })
+  params.onWalletStep?.('placing')
+  let result: Awaited<ReturnType<typeof trader.placeOrder>>
+  try {
+    result = await trader.placeOrder({
+      pool: params.round.poolAddress,
+      side: refreshed.orderSide,
+      price: refreshed.yesLimitPriceRaw,
+      quantity: refreshed.quantityRaw,
+      outcomeToken: onchain.outcomeToken,
+      yesId: onchain.yesId,
+      noId: onchain.noId,
+      expireTimestampNs: BigInt(orderExpirySeconds) * 1_000_000_000n,
+      orderType: ORDER_TYPE.MARKET,
+      autoApprove: false,
+    })
+  } catch (cause) {
+    if (isWalletRejection(cause)) throw cause
+    throw new PlayerCashoutError(
+      'DreamDEX could not execute the cash out. Your remaining position is unchanged.',
+      'ORDER_REJECTED',
+      { cause },
+    )
+  }
+
+  const filledQuantityRaw = result.fills.reduce(
+    (total, fill) => total + fill.quantityFilled,
+    0n,
+  )
+  const proceedsRaw = filledOrderCostRaw({
+    side: refreshed.side,
+    collateralDecimals: refreshed.collateralDecimals,
+    fills: result.fills,
+  })
+  const status =
+    filledQuantityRaw <= 0n
+      ? 'unfilled'
+      : filledQuantityRaw < refreshed.quantityRaw
+        ? 'partial'
+        : 'filled'
+
+  return {
+    status,
+    hash: result.hash,
+    requestedQuantityRaw: refreshed.quantityRaw,
+    filledQuantityRaw,
+    proceedsRaw,
+  }
 }
 
 function sameExecutionTerms(
@@ -403,3 +683,4 @@ async function preparePlayerTradeRaw(params: {
     marketExpiresAt: Number(onchain.expiry),
   }
 }
+  PreparedPlayerCashout,

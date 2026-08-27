@@ -46,6 +46,7 @@ export function normalizeBinaryMarket(
   market: BinaryMarket,
   nowSeconds = Math.floor(Date.now() / 1_000),
   collateral?: Pick<Erc20Metadata, 'symbol' | 'decimals'>,
+  openingPriceRaw?: string | null,
 ): PumpyEventMarket {
   const intervalSeconds = market.intervalSec
     ? Number(market.intervalSec)
@@ -60,6 +61,8 @@ export function normalizeBinaryMarket(
     oracleQuestion: market.oracleQuestion,
     reference: market.strike === '0' ? 'opening-price' : 'fixed-strike',
     strikeRaw: market.strike,
+    targetPriceRaw:
+      market.strike === '0' ? (openingPriceRaw ?? null) : market.strike,
     status: lifecycleAt(market, nowSeconds),
     tradingStartsAt: Number(market.tradingStart),
     expiresAt: Number(market.expiry),
