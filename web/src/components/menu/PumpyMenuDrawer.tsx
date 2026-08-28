@@ -23,6 +23,7 @@ import type { PlayerPortfolioState } from '@/lib/dreamdex/usePlayerPortfolio'
 import type { PlayerWalletControls } from '@/lib/dreamdex/usePlayerWallet'
 import type { PumpyPlayerProfile } from '@/lib/pumpy/playerProfile'
 import { PUMPY_THEMES } from '@/components/console/themes'
+import { deriveVerifiedPlayerMetrics } from '@/lib/dreamdex/portfolioMetrics'
 import { usePlayerPortfolio } from '@/lib/dreamdex/usePlayerPortfolio'
 import {
   profileAchievements,
@@ -104,19 +105,35 @@ export function PumpyMenuDrawer({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, open])
 
-  const achievements = useMemo(
-    () => profileAchievements(profile, candleBest, rangeBest, rangeMaxStack),
-    [candleBest, profile, rangeBest, rangeMaxStack],
-  )
-  const unlocked = achievements.filter(
-    (achievement) => achievement.unlocked,
-  ).length
-  const volume = profile.plays.reduce(
+  const localVolume = profile.plays.reduce(
     (total, play) =>
       total +
       Number(formatUnits(BigInt(play.premiumRaw), play.collateralDecimals)),
     0,
   )
+  const verifiedMetrics = useMemo(
+    () =>
+      chainPortfolio.phase === 'ready' && chainPortfolio.portfolio
+        ? deriveVerifiedPlayerMetrics(chainPortfolio.portfolio.trades)
+        : null,
+    [chainPortfolio.phase, chainPortfolio.portfolio],
+  )
+  const volume = verifiedMetrics?.volume ?? localVolume
+  const plays = verifiedMetrics?.plays ?? profile.plays.length
+  const achievements = useMemo(
+    () =>
+      profileAchievements(
+        profile,
+        candleBest,
+        rangeBest,
+        rangeMaxStack,
+        verifiedMetrics,
+      ),
+    [candleBest, profile, rangeBest, rangeMaxStack, verifiedMetrics],
+  )
+  const unlocked = achievements.filter(
+    (achievement) => achievement.unlocked,
+  ).length
 
   if (!open) return null
 
@@ -185,8 +202,9 @@ export function PumpyMenuDrawer({
             <PlayerCard
               address={wallet.address}
               status={wallet.status}
-              plays={profile.plays.length}
+              plays={plays}
               volume={volume}
+              metricsPhase={chainPortfolio.phase}
               candleBest={candleBest}
               unlocked={unlocked}
               totalBadges={achievements.length}
@@ -201,6 +219,10 @@ export function PumpyMenuDrawer({
               onDisconnect={() => {
                 haptic('warning')
                 wallet.disconnect()
+              }}
+              onRefreshMetrics={() => {
+                haptic('selection')
+                void chainPortfolio.refresh()
               }}
             />
           )}
@@ -315,23 +337,27 @@ function PlayerCard({
   status,
   plays,
   volume,
+  metricsPhase,
   candleBest,
   unlocked,
   totalBadges,
   error,
   onConnect,
   onDisconnect,
+  onRefreshMetrics,
 }: {
   address: string | null
   status: string
   plays: number
   volume: number
+  metricsPhase: PlayerPortfolioState['phase']
   candleBest: number
   unlocked: number
   totalBadges: number
   error: string | null
   onConnect: () => void
   onDisconnect: () => void
+  onRefreshMetrics: () => void
 }) {
   const handle = address
     ? `player_${address.slice(2, 6).toLowerCase()}`
@@ -375,11 +401,39 @@ function PlayerCard({
           </span>
         </div>
         <div className="mt-6">
-          <div className="font-mono text-[9px] font-black uppercase tracking-[0.16em] text-text-3">
-            Arcade volume
+          <div className="flex items-center justify-between gap-3">
+            <div className="font-mono text-[9px] font-black uppercase tracking-[0.16em] text-text-3">
+              DreamDEX volume
+            </div>
+            {address && (
+              <button
+                type="button"
+                onClick={onRefreshMetrics}
+                disabled={metricsPhase === 'loading'}
+                aria-label="Refresh DreamDEX volume and badges"
+                className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-white/5 text-text-2 transition active:scale-90 disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={cnm(
+                    'h-3.5 w-3.5',
+                    metricsPhase === 'loading' && 'animate-spin',
+                  )}
+                  aria-hidden="true"
+                />
+              </button>
+            )}
           </div>
           <div className="mt-1 text-[45px] font-black leading-none text-brand-500">
             ${volume.toFixed(2)}
+          </div>
+          <div className="mt-2 font-mono text-[8px] font-black uppercase tracking-[0.1em] text-text-3">
+            {metricsPhase === 'ready'
+              ? 'Verified from wallet fills'
+              : metricsPhase === 'error'
+                ? 'Fill sync unavailable'
+                : address
+                  ? 'Syncing wallet fills'
+                  : 'Connect to verify'}
           </div>
         </div>
         <div className="mt-5 grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 pt-4">

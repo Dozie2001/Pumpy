@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { SHANNON_CHAIN_ID } from './network'
 import {
@@ -23,6 +23,26 @@ const DISCONNECTED: PlayerWalletState = {
 
 const WALLET_NOT_FOUND =
   'No injected EVM wallet was found. Open Pumpy in a wallet browser or install a browser wallet.'
+const MANUAL_DISCONNECT_KEY = 'pumpy:wallet:manually-disconnected'
+
+function readManualDisconnect(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(MANUAL_DISCONNECT_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeManualDisconnect(disconnected: boolean): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (disconnected) window.localStorage.setItem(MANUAL_DISCONNECT_KEY, '1')
+    else window.localStorage.removeItem(MANUAL_DISCONNECT_KEY)
+  } catch {
+    // Wallet operation remains usable when browser storage is unavailable.
+  }
+}
 
 function walletError(error: unknown): string {
   if (
@@ -37,6 +57,7 @@ function walletError(error: unknown): string {
 }
 
 export function usePlayerWallet() {
+  const intentionallyDisconnected = useRef(readManualDisconnect())
   const [state, setState] = useState<PlayerWalletState>(() =>
     getInjectedWallet()
       ? DISCONNECTED
@@ -56,6 +77,11 @@ export function usePlayerWallet() {
         status: 'unavailable',
         error: WALLET_NOT_FOUND,
       })
+      return
+    }
+    if (intentionallyDisconnected.current) {
+      clearPlayerWallet()
+      setState(DISCONNECTED)
       return
     }
 
@@ -155,6 +181,8 @@ export function usePlayerWallet() {
     setState((current) => ({ ...current, status: 'connecting', error: null }))
     try {
       const session = await requestPlayerWallet(provider)
+      intentionallyDisconnected.current = false
+      writeManualDisconnect(false)
       setState({
         status: 'connected',
         address: session.address,
@@ -190,6 +218,8 @@ export function usePlayerWallet() {
   }, [sync])
 
   const disconnect = useCallback(() => {
+    intentionallyDisconnected.current = true
+    writeManualDisconnect(true)
     clearPlayerWallet()
     setState(DISCONNECTED)
   }, [])

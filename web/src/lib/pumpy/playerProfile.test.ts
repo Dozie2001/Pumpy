@@ -160,4 +160,33 @@ describe('Pumpy player profile', () => {
       achievements.find((badge) => badge.id === 'full-stack')?.unlocked,
     ).toBe(true)
   })
+
+  it('uses verified DreamDEX metrics for trade-earned badges', () => {
+    const achievements = profileAchievements(
+      readPlayerProfile(storage(), account),
+      0,
+      0,
+      0,
+      {
+        plays: 3,
+        volume: 12,
+        hasUp: true,
+        hasDown: true,
+        hasChainProof: true,
+      },
+    )
+
+    expect(
+      achievements.find((badge) => badge.id === 'first-pump')?.unlocked,
+    ).toBe(true)
+    expect(
+      achievements.find((badge) => badge.id === 'two-way-player')?.unlocked,
+    ).toBe(true)
+    expect(
+      achievements.find((badge) => badge.id === 'chain-proof')?.unlocked,
+    ).toBe(true)
+    expect(
+      achievements.find((badge) => badge.id === 'volume-ten')?.unlocked,
+    ).toBe(true)
+  })
 })

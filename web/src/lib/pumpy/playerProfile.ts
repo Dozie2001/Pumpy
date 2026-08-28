@@ -38,6 +38,14 @@ export type PumpyAchievement = {
   progress: string
 }
 
+export type VerifiedPlayerMetrics = {
+  plays: number
+  volume: number
+  hasUp: boolean
+  hasDown: boolean
+  hasChainProof: boolean
+}
+
 export function playerProfileKey(account: Address): string {
   return `${STORAGE_PREFIX}:${account.toLowerCase()}`
 }
@@ -117,34 +125,42 @@ export function profileAchievements(
   candleBest: number,
   rangeBest = 0,
   rangeMaxStack = 0,
+  verified?: VerifiedPlayerMetrics | null,
 ): Array<PumpyAchievement> {
-  const sides = new Set(profile.plays.map((play) => play.side))
-  const volume = profile.plays.reduce(
-    (total, play) =>
-      total + Number(play.premiumRaw) / 10 ** play.collateralDecimals,
-    0,
-  )
+  const localSides = new Set(profile.plays.map((play) => play.side))
+  const plays = verified?.plays ?? profile.plays.length
+  const hasUp = verified?.hasUp ?? localSides.has('UP')
+  const hasDown = verified?.hasDown ?? localSides.has('DOWN')
+  const volume =
+    verified?.volume ??
+    profile.plays.reduce(
+      (total, play) =>
+        total + Number(play.premiumRaw) / 10 ** play.collateralDecimals,
+      0,
+    )
   return [
     {
       id: 'first-pump',
       name: 'First Pump',
       description: 'Fill your first DreamDEX arcade play.',
-      unlocked: profile.plays.length >= 1,
-      progress: `${Math.min(profile.plays.length, 1)}/1`,
+      unlocked: plays >= 1,
+      progress: `${Math.min(plays, 1)}/1`,
     },
     {
       id: 'two-way-player',
       name: 'Two-Way Player',
       description: 'Play both UP and DOWN through the lucky deal.',
-      unlocked: sides.has('UP') && sides.has('DOWN'),
-      progress: `${sides.size}/2 sides`,
+      unlocked: hasUp && hasDown,
+      progress: `${Number(hasUp) + Number(hasDown)}/2 sides`,
     },
     {
       id: 'chain-proof',
       name: 'Chain Proof',
       description: 'Land a wallet-signed Event Contract order.',
-      unlocked: profile.plays.some((play) => play.id.startsWith('0x')),
-      progress: profile.plays.length ? 'Verified' : '0/1',
+      unlocked:
+        verified?.hasChainProof ??
+        profile.plays.some((play) => play.id.startsWith('0x')),
+      progress: plays ? 'Verified' : '0/1',
     },
     {
       id: 'volume-ten',

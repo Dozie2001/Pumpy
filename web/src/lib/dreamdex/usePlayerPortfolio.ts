@@ -3,6 +3,7 @@ import { getDreamDexExchange } from './client'
 import type { ClaimablePosition, Portfolio } from '@somnia-chain/markets-sdk'
 import type { Address } from 'viem'
 
+const PORTFOLIO_TRADE_LIMIT = 200
 
 export type PlayerPortfolioState = {
   phase: 'idle' | 'loading' | 'ready' | 'error'
@@ -32,11 +33,18 @@ export function usePlayerPortfolio(address: Address | null, enabled = true) {
   const refresh = useCallback(async () => {
     if (!address || !enabled) return
     const request = ++requestRef.current
-    setState((current) => ({ ...current, phase: current.portfolio ? 'ready' : 'loading', error: null }))
+    setState((current) => ({
+      ...current,
+      phase: current.portfolio ? 'ready' : 'loading',
+      error: null,
+    }))
     try {
       const client = getDreamDexExchange().client
       const [portfolio, claimable] = await Promise.all([
-        client.getPortfolio(address, { ordersLimit: 20, tradesLimit: 40 }),
+        client.getPortfolio(address, {
+          ordersLimit: 20,
+          tradesLimit: PORTFOLIO_TRADE_LIMIT,
+        }),
         client.getClaimable(address),
       ])
       if (request !== requestRef.current) return
@@ -52,7 +60,10 @@ export function usePlayerPortfolio(address: Address | null, enabled = true) {
       setState((current) => ({
         ...current,
         phase: 'error',
-        error: cause instanceof Error ? cause.message : 'Could not load DreamDEX portfolio',
+        error:
+          cause instanceof Error
+            ? cause.message
+            : 'Could not load DreamDEX portfolio',
       }))
     }
   }, [address, enabled])
