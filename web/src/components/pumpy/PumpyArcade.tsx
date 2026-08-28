@@ -7,8 +7,9 @@ import {
   Sparkles,
   WalletCards,
 } from 'lucide-react'
+import NumberFlow from '@number-flow/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { formatUnits } from 'viem'
+import { formatUnits, parseUnits } from 'viem'
 
 import type { ConsoleControls } from '@/components/console/controls'
 import type { LiveAssetPriceState } from '@/lib/dreamdex/useLiveAssetPrice'
@@ -42,6 +43,7 @@ import { TestCollateralCard } from '@/components/pumpy/PumpyExperience'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useEventMarkets } from '@/lib/dreamdex/useEventMarkets'
 import {
+  cashoutPnlDirection,
   liveCashoutButtonLabel,
   liveCashoutGuidance,
 } from '@/lib/dreamdex/cashoutUi'
@@ -54,6 +56,7 @@ import { selectFixedStrikePumpyMarkets } from '@/lib/dreamdex/normalize'
 import { usePlayerCashout } from '@/lib/dreamdex/usePlayerCashout'
 import {
   longShotDistancePercent,
+  longShotReturnMultiplier,
   longShotSideForTarget,
 } from '@/lib/dreamdex/longShot'
 import { usePlayerQuote } from '@/lib/dreamdex/usePlayerQuote'
@@ -207,14 +210,17 @@ export function PumpyArcade({
     longShotMarket?.targetPriceRaw,
     livePrice.price,
   )?.price
+  const longShotPreviewSide =
+    longShotTarget != null && livePrice.price != null
+      ? longShotSideForTarget(livePrice.price, longShotTarget)
+      : null
+  const longShotQuoteSide = longShotSide ?? longShotPreviewSide
   const longShotQuote = usePlayerQuote({
     market: longShotMarket,
-    side: longShotSide,
+    side: longShotQuoteSide,
     stake,
     account: wallet.address,
-    enabled:
-      screen === 'long-shot' &&
-      (longShotPhase === 'review' || longShotPhase === 'submitting'),
+    enabled: screen === 'long-shot',
   })
   const multiplier = quote.quote ? quoteMultiplier(quote.quote) : undefined
 
@@ -1299,6 +1305,14 @@ function LongShotGame({
     targetPrice != null && livePrice.price != null
       ? longShotDistancePercent(livePrice.price, targetPrice)
       : null
+  const expectedStakeRaw = parseUnits(String(stake), market.collateralDecimals)
+  const quoteMatchesSelection =
+    quote?.marketId === market.marketId &&
+    quote.side === previewSide &&
+    quote.stakeRaw === expectedStakeRaw
+  const liveReturn = longShotReturnMultiplier(
+    quoteMatchesSelection ? quote : null,
+  )
   const reviewing =
     phase === 'review' || phase === 'submitting' || phase === 'error'
   const nextAction =
@@ -1351,8 +1365,20 @@ function LongShotGame({
 
       <div className="grid h-[68px] shrink-0 grid-cols-[1fr_auto_1fr] items-center border-y border-line-strong bg-black px-[var(--screen-rim,24px)]">
         <div className="min-w-0 pr-5 text-left">
-          <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
-            Target {targetCount ? `${targetIndex + 1}/${targetCount}` : ''}
+          <div className="flex items-center gap-2 font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
+            <span>
+              Target {targetCount ? `${targetIndex + 1}/${targetCount}` : ''}
+            </span>
+            {previewSide && (
+              <span
+                className={cnm(
+                  'tracking-[0.08em]',
+                  previewSide === 'UP' ? 'text-up' : 'text-down',
+                )}
+              >
+                {previewSide === 'UP' ? '▲ UP' : '▼ DOWN'}
+              </span>
+            )}
           </div>
           <div className="mt-1 text-[24px] font-black leading-none text-brand-500 tabular-nums">
             {targetPrice == null ? 'Syncing' : `$${formatPrice(targetPrice)}`}
@@ -1361,15 +1387,13 @@ function LongShotGame({
         <div className="h-9 w-px bg-line-strong" />
         <div className="min-w-0 pl-5 text-right">
           <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
-            Call
+            Live return
           </div>
-          <div
-            className={cnm(
-              'mt-1 text-[24px] font-black leading-none',
-              previewSide === 'UP' ? 'text-up' : 'text-down',
-            )}
-          >
-            {previewSide === 'UP' ? '▲ REACH UP' : '▼ REACH DOWN'}
+          <div className="mt-1 text-[30px] font-black leading-none text-brand-500 tabular-nums">
+            <LongShotReturnFlow
+              value={liveReturn}
+              loading={quotePhase === 'loading'}
+            />
           </div>
         </div>
       </div>
@@ -1514,6 +1538,48 @@ function LongShotHowToRow({
         <p className="mt-1 text-text-3">{body}</p>
       </div>
     </div>
+  )
+}
+
+function LongShotReturnFlow({
+  value,
+  loading,
+}: {
+  value: number | null
+  loading: boolean
+}) {
+  const reducedMotion = useReducedMotion()
+
+  if (value == null) {
+    return (
+      <span
+        className="font-mono text-[11px] uppercase tracking-[0.1em] text-text-3"
+        aria-label={loading ? 'Loading live return' : 'Live return unavailable'}
+      >
+        {loading ? 'Quoting' : '—'}
+      </span>
+    )
+  }
+
+  return (
+    <NumberFlow
+      value={value}
+      suffix="×"
+      format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }}
+      animated={!reducedMotion}
+      respectMotionPreference
+      transformTiming={{
+        duration: 560,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      }}
+      spinTiming={{
+        duration: 640,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      }}
+      opacityTiming={{ duration: 240, easing: 'ease-out' }}
+      trend={0}
+      aria-label={`${value.toFixed(2)} times total return if the position wins`}
+    />
   )
 }
 
@@ -1908,6 +1974,23 @@ function LuckyPosition({
           exitPnlRaw >= 0n ? exitPnlRaw : -exitPnlRaw,
           round.collateralDecimals,
         )}`
+  const realizedCashoutProceedsRaw = BigInt(round.cashoutProceedsRaw ?? '0')
+  const realizedCashoutDirection = cashoutPnlDirection({
+    proceedsRaw: realizedCashoutProceedsRaw,
+    costRaw,
+  })
+  const realizedCashoutDeltaRaw =
+    realizedCashoutProceedsRaw >= costRaw
+      ? realizedCashoutProceedsRaw - costRaw
+      : costRaw - realizedCashoutProceedsRaw
+  const realizedCashoutDelta = moneyFromRaw(
+    realizedCashoutDeltaRaw,
+    round.collateralDecimals,
+  )
+  const realizedCashoutProceeds = moneyFromRaw(
+    realizedCashoutProceedsRaw,
+    round.collateralDecimals,
+  )
 
   useEffect(() => {
     if (!expired || resolved || refreshedAtExpiry.current === round.marketId)
@@ -1937,11 +2020,19 @@ function LuckyPosition({
       hapticPattern('cashOut')
       chipsGranted()
     } else if (result === 'cashed-out') {
-      hapticPattern('cashOut')
-      if (isLongShot) moonshotCashout()
-      else luckyCashout()
+      if (realizedCashoutDirection === 'loss') {
+        hapticPattern('lose')
+        if (isLongShot) moonshotLose()
+        else luckyLose()
+      } else {
+        hapticPattern('cashOut')
+        if (realizedCashoutDirection === 'profit') {
+          if (isLongShot) moonshotCashout()
+          else luckyCashout()
+        }
+      }
     }
-  }, [isLongShot, result, round.marketId])
+  }, [isLongShot, realizedCashoutDirection, result, round.marketId])
 
   if (!resolved) {
     return (
@@ -2057,7 +2148,17 @@ function LuckyPosition({
                 label="Cash out"
                 value={exitProceeds == null ? '—' : `$${exitProceeds}`}
               />
-              <Readout label="Exit P/L" value={exitPnl ?? '—'} />
+              <Readout
+                label="Exit P/L"
+                value={exitPnl ?? '—'}
+                tone={
+                  exitPnlRaw == null || exitPnlRaw === 0n
+                    ? 'default'
+                    : exitPnlRaw < 0n
+                      ? 'negative'
+                      : 'positive'
+                }
+              />
             </div>
             <div className="mt-2 font-mono text-[8px] uppercase leading-[1.4] tracking-[0.06em] text-text-3">
               {expired
@@ -2119,25 +2220,29 @@ function LuckyPosition({
                 body: 'The payout claim was confirmed and sent to your wallet.',
               }
             : result === 'cashed-out'
-              ? {
-                  tone: 'claimed' as const,
-                  kicker: 'Exit filled onchain',
-                  title: 'Cashed out',
-                  value: `${
-                    BigInt(round.cashoutProceedsRaw ?? '0') >= costRaw
-                      ? '+'
-                      : '−'
-                  }$${moneyFromRaw(
-                    BigInt(round.cashoutProceedsRaw ?? '0') >= costRaw
-                      ? BigInt(round.cashoutProceedsRaw ?? '0') - costRaw
-                      : costRaw - BigInt(round.cashoutProceedsRaw ?? '0'),
-                    round.collateralDecimals,
-                  )}`,
-                  body: `DreamDEX sold the position before expiry for $${moneyFromRaw(
-                    BigInt(round.cashoutProceedsRaw ?? '0'),
-                    round.collateralDecimals,
-                  )}. No settlement claim is required.`,
-                }
+              ? realizedCashoutDirection === 'loss'
+                ? {
+                    tone: 'loss' as const,
+                    kicker: 'Exit filled at a loss',
+                    title: 'Loss locked in',
+                    value: `−$${realizedCashoutDelta}`,
+                    body: `You recovered $${realizedCashoutProceeds} by selling early and realized a $${realizedCashoutDelta} loss. The position is closed; no claim remains.`,
+                  }
+                : realizedCashoutDirection === 'profit'
+                  ? {
+                      tone: 'claimed' as const,
+                      kicker: 'Profitable exit confirmed',
+                      title: 'Profit secured',
+                      value: `+$${realizedCashoutDelta}`,
+                      body: `DreamDEX sold the position early for $${realizedCashoutProceeds}, locking in $${realizedCashoutDelta} profit. No settlement claim is required.`,
+                    }
+                  : {
+                      tone: 'even' as const,
+                      kicker: 'Exit filled onchain',
+                      title: 'Break even',
+                      value: '$0.00',
+                      body: `DreamDEX sold the position early for $${realizedCashoutProceeds}, matching your filled cost. The position is closed; no claim remains.`,
+                    }
               : {
                   tone: 'claimed' as const,
                   kicker: 'Market voided',
@@ -2181,13 +2286,27 @@ function LuckyPosition({
             }
           />
           <Readout
-            label={result === 'lost' ? 'Lost' : 'Profit'}
+            label={
+              result === 'lost'
+                ? 'Lost'
+                : result === 'cashed-out'
+                  ? 'Realized P/L'
+                  : 'Profit'
+            }
             value={
               result === 'lost'
                 ? `−$${cost}`
                 : result === 'cashed-out'
                   ? presentation.value
                   : `+$${profit}`
+            }
+            tone={
+              result === 'lost' ||
+              (result === 'cashed-out' && realizedCashoutDirection === 'loss')
+                ? 'negative'
+                : result === 'cashed-out' && realizedCashoutDirection === 'even'
+                  ? 'default'
+                  : 'positive'
             }
           />
         </div>
@@ -2216,7 +2335,11 @@ function LuckyPosition({
               : result === 'claimed'
                 ? 'Claim recorded onchain'
                 : result === 'cashed-out'
-                  ? 'Exit receipt confirmed · no claim needed'
+                  ? realizedCashoutDirection === 'loss'
+                    ? 'Loss-making exit confirmed · no claim needed'
+                    : realizedCashoutDirection === 'profit'
+                      ? 'Profit-taking exit confirmed · no claim needed'
+                      : 'Break-even exit confirmed · no claim needed'
                   : phase === 'loading' || result === 'won'
                     ? 'Refreshing Event Contract state'
                     : 'Press the big button to play again'}
@@ -2455,13 +2578,30 @@ function CandleHopResult({
   )
 }
 
-function Readout({ label, value }: { label: string; value: string }) {
+function Readout({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string
+  value: string
+  tone?: 'default' | 'positive' | 'negative'
+}) {
   return (
     <div>
       <div className="font-mono text-[8px] font-black uppercase tracking-[0.12em] text-text-3">
         {label}
       </div>
-      <div className="mt-1 truncate font-mono text-[12px] font-black text-text">
+      <div
+        className={cnm(
+          'mt-1 truncate font-mono text-[12px] font-black',
+          tone === 'negative'
+            ? 'text-down'
+            : tone === 'positive'
+              ? 'text-up'
+              : 'text-text',
+        )}
+      >
         {value}
       </div>
     </div>

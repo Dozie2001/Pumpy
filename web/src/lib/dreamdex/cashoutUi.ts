@@ -1,5 +1,16 @@
 import type { CashoutPhase } from './usePlayerCashout'
 
+export type CashoutPnlDirection = 'profit' | 'loss' | 'even'
+
+export function cashoutPnlDirection(params: {
+  proceedsRaw: bigint
+  costRaw: bigint
+}): CashoutPnlDirection {
+  if (params.proceedsRaw > params.costRaw) return 'profit'
+  if (params.proceedsRaw < params.costRaw) return 'loss'
+  return 'even'
+}
+
 export function liveCashoutButtonLabel(params: {
   phase: CashoutPhase
   fullExitAvailable: boolean

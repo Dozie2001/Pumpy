@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest'
 
-import { liveCashoutButtonLabel, liveCashoutGuidance } from './cashoutUi'
+import {
+  cashoutPnlDirection,
+  liveCashoutButtonLabel,
+  liveCashoutGuidance,
+} from './cashoutUi'
 
 describe('cash-out presentation', () => {
+  it('classifies realized exits by proceeds versus actual filled cost', () => {
+    expect(cashoutPnlDirection({ proceedsRaw: 12n, costRaw: 10n })).toBe(
+      'profit',
+    )
+    expect(cashoutPnlDirection({ proceedsRaw: 8n, costRaw: 10n })).toBe('loss')
+    expect(cashoutPnlDirection({ proceedsRaw: 10n, costRaw: 10n })).toBe('even')
+  })
+
   it('offers one cash-out action as soon as the automatic quote is ready', () => {
     expect(
       liveCashoutButtonLabel({
