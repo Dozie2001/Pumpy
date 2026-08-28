@@ -1,7 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-// The console remains isolated behind the pathless _app layout so the landing
-// page can explain Pumpy without mounting WebGL or wallet integrations.
+// The signed-in arcade remains behind the pathless _app layout. Wallet loss or
+// explicit disconnect returns to the root console door before another game can
+// be opened.
 export const Route = createFileRoute('/_app/play')({
   component: () => null,
 })

@@ -8,6 +8,7 @@ import { ErrorPage, NotFoundPage } from '../components/FaultScreen'
 import appCss from '../styles.css?url'
 import type { QueryClient } from '@tanstack/react-query'
 import { SITE_URL } from '@/config'
+import { PlayerWalletProvider } from '@/lib/dreamdex/usePlayerWallet'
 
 interface MyRouterContext {
   queryClient: QueryClient
@@ -136,7 +137,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
             },
           }}
         />
-        {children}
+        <PlayerWalletProvider>{children}</PlayerWalletProvider>
         <Scripts />
       </body>
     </html>

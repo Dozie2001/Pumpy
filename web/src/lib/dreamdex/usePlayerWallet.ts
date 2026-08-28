@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 
 import { SHANNON_CHAIN_ID } from './network'
 import {
@@ -10,6 +18,7 @@ import {
   switchInjectedWalletToShannon,
   watchInjectedWallet,
 } from './wallet'
+import type { ReactNode } from 'react'
 import type { InjectedWalletProvider } from './wallet'
 import type { PlayerWalletState } from './types'
 
@@ -56,8 +65,9 @@ function walletError(error: unknown): string {
   return error instanceof Error ? error.message : 'Wallet request failed'
 }
 
-export function usePlayerWallet() {
+function usePlayerWalletController() {
   const intentionallyDisconnected = useRef(readManualDisconnect())
+  const [initialized, setInitialized] = useState(false)
   const [state, setState] = useState<PlayerWalletState>(() =>
     getInjectedWallet()
       ? DISCONNECTED
@@ -77,11 +87,13 @@ export function usePlayerWallet() {
         status: 'unavailable',
         error: WALLET_NOT_FOUND,
       })
+      setInitialized(true)
       return
     }
     if (intentionallyDisconnected.current) {
       clearPlayerWallet()
       setState(DISCONNECTED)
+      setInitialized(true)
       return
     }
 
@@ -120,6 +132,8 @@ export function usePlayerWallet() {
         status: 'error',
         error: walletError(error),
       })
+    } finally {
+      setInitialized(true)
     }
   }, [])
 
@@ -159,6 +173,7 @@ export function usePlayerWallet() {
         status: 'unavailable',
         error: WALLET_NOT_FOUND,
       })
+      setInitialized(true)
     }
 
     return () => {
@@ -175,6 +190,7 @@ export function usePlayerWallet() {
         status: 'unavailable',
         error: WALLET_NOT_FOUND,
       })
+      setInitialized(true)
       return
     }
 
@@ -190,6 +206,7 @@ export function usePlayerWallet() {
         error: null,
         session,
       })
+      setInitialized(true)
     } catch (error) {
       clearPlayerWallet()
       setState((current) => ({
@@ -198,6 +215,7 @@ export function usePlayerWallet() {
         error: walletError(error),
         session: null,
       }))
+      setInitialized(true)
     }
   }, [])
 
@@ -214,6 +232,7 @@ export function usePlayerWallet() {
         status: 'wrong-network',
         error: walletError(error),
       }))
+      setInitialized(true)
     }
   }, [sync])
 
@@ -222,9 +241,34 @@ export function usePlayerWallet() {
     writeManualDisconnect(true)
     clearPlayerWallet()
     setState(DISCONNECTED)
+    setInitialized(true)
   }, [])
 
-  return { ...state, connect, switchNetwork, disconnect }
+  return { ...state, initialized, connect, switchNetwork, disconnect }
 }
 
-export type PlayerWalletControls = ReturnType<typeof usePlayerWallet>
+export type PlayerWalletControls = ReturnType<typeof usePlayerWalletController>
+
+const PlayerWalletContext = createContext<PlayerWalletControls | null>(null)
+
+/**
+ * One wallet controller spans the public door and the signed-in arcade. Route
+ * changes therefore cannot briefly replace a connected session with a fresh
+ * disconnected hook while the console is settling into its app pose.
+ */
+export function PlayerWalletProvider({ children }: { children: ReactNode }) {
+  const wallet = usePlayerWalletController()
+  return createElement(
+    PlayerWalletContext.Provider,
+    { value: wallet },
+    children,
+  )
+}
+
+export function usePlayerWallet(): PlayerWalletControls {
+  const wallet = useContext(PlayerWalletContext)
+  if (!wallet) {
+    throw new Error('usePlayerWallet must be used inside PlayerWalletProvider')
+  }
+  return wallet
+}

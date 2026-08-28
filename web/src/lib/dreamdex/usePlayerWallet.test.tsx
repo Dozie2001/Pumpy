@@ -3,7 +3,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { usePlayerWallet } from './usePlayerWallet'
+import { PlayerWalletProvider, usePlayerWallet } from './usePlayerWallet'
 import type { InjectedWalletProvider } from './wallet'
 
 const setSigner = vi.fn()
@@ -39,7 +39,9 @@ describe('player wallet reconnect', () => {
       value: provider,
     })
 
-    const { result, unmount } = renderHook(() => usePlayerWallet())
+    const { result, unmount } = renderHook(() => usePlayerWallet(), {
+      wrapper: PlayerWalletProvider,
+    })
     await waitFor(() => expect(result.current.status).toBe('connected'))
 
     act(() => result.current.disconnect())
