@@ -3,7 +3,14 @@ import {
   ORDER_TYPE,
   erc6909Abi,
 } from '@somnia-chain/markets-sdk'
-import { erc20Abi, maxUint256, parseUnits } from 'viem'
+import {
+  encodeFunctionData,
+  erc20Abi,
+  maxUint256,
+  parseAbi,
+  parseUnits,
+  zeroAddress,
+} from 'viem'
 
 import { getDreamDexExchange } from './client'
 import { SHANNON_CHAIN_ID } from './network'
@@ -31,6 +38,13 @@ import type {
 } from './types'
 
 const CASHOUT_QUOTE_TTL_MS = 8_000
+const CANCEL_TAKER = 0
+const SELL_YES = 1
+const SELL_NO = 3
+
+const binaryCashoutAbi = parseAbi([
+  'function placeBinaryOrder(uint8 kind, uint256 price, uint256 quantity, uint64 expireTimestampNs, uint8 orderType, uint8 selfMatchingOption, address builder, uint96 builderFeeBpsTimes1k, uint64 userData) payable returns (bool success, uint128 id)',
+])
 
 export class PlayerCashoutError extends Error {
   constructor(
@@ -199,7 +213,9 @@ export async function placePreparedPlayerCashout(params: {
   cashout: PreparedPlayerCashout
   round: QuickCallRound
   wallet: PlayerWalletSession
-  onWalletStep?: (step: 'approving' | 'refreshing' | 'placing') => void
+  onWalletStep?: (
+    step: 'batching' | 'approving' | 'refreshing' | 'placing',
+  ) => void
 }): Promise<PlayerCashoutOutcome> {
   const client = getDreamDexExchange().client
   const activeChainId = await params.wallet.walletClient.getChainId()
@@ -299,7 +315,23 @@ export async function placePreparedPlayerCashout(params: {
     functionName: 'isOperator',
     args: [params.wallet.address, params.round.poolAddress],
   })
+  const orderExpirySeconds = Math.min(
+    Number(onchain.expiry) - 1,
+    Math.floor(Date.now() / 1_000) + 60,
+  )
   if (!isOperator) {
+    if (await supportsAtomicWalletCalls(params.wallet)) {
+      params.onWalletStep?.('batching')
+      return placeAtomicPlayerCashout({
+        wallet: params.wallet,
+        cashout: refreshed,
+        collateral: onchain.collateral,
+        outcomeToken: onchain.outcomeToken,
+        outcomeId,
+        expireTimestampNs: BigInt(orderExpirySeconds) * 1_000_000_000n,
+      })
+    }
+
     params.onWalletStep?.('approving')
     const approvalHash = await params.wallet.walletClient.writeContract({
       account: params.wallet.address,
@@ -330,11 +362,6 @@ export async function placePreparedPlayerCashout(params: {
       )
     }
   }
-
-  const orderExpirySeconds = Math.min(
-    Number(onchain.expiry) - 1,
-    Math.floor(Date.now() / 1_000) + 60,
-  )
   const trader = client.createTrader({
     walletClient: params.wallet.walletClient,
     decimals: params.round.collateralDecimals,
@@ -383,6 +410,136 @@ export async function placePreparedPlayerCashout(params: {
     status,
     hash: result.hash,
     requestedQuantityRaw: refreshed.quantityRaw,
+    filledQuantityRaw,
+    proceedsRaw,
+  }
+}
+
+async function supportsAtomicWalletCalls(
+  wallet: PlayerWalletSession,
+): Promise<boolean> {
+  try {
+    const capabilities = await wallet.walletClient.getCapabilities({
+      account: wallet.address,
+      chainId: SHANNON_CHAIN_ID,
+    })
+    return (
+      capabilities.atomic?.status === 'supported' ||
+      capabilities.atomic?.status === 'ready'
+    )
+  } catch {
+    return false
+  }
+}
+
+async function placeAtomicPlayerCashout(params: {
+  wallet: PlayerWalletSession
+  cashout: PreparedPlayerCashout
+  collateral: Address
+  outcomeToken: Address
+  outcomeId: bigint
+  expireTimestampNs: bigint
+}): Promise<PlayerCashoutOutcome> {
+  const client = getDreamDexExchange().client
+  const [positionBefore, collateralBefore] = await Promise.all([
+    client.getOutcomeBalance({
+      outcomeToken: params.outcomeToken,
+      account: params.wallet.address,
+      id: params.outcomeId,
+    }),
+    client.getErc20Balance(params.collateral, params.wallet.address),
+  ])
+
+  const kind = params.cashout.orderSide === 'SELL_YES' ? SELL_YES : SELL_NO
+  const { id } = await params.wallet.walletClient.sendCalls({
+    account: params.wallet.address,
+    chain: params.wallet.walletClient.chain,
+    forceAtomic: true,
+    calls: [
+      {
+        to: params.outcomeToken,
+        data: encodeFunctionData({
+          abi: erc6909Abi,
+          functionName: 'setOperator',
+          args: [params.cashout.poolAddress, true],
+        }),
+      },
+      {
+        to: params.cashout.poolAddress,
+        data: encodeFunctionData({
+          abi: binaryCashoutAbi,
+          functionName: 'placeBinaryOrder',
+          args: [
+            kind,
+            params.cashout.yesLimitPriceRaw,
+            params.cashout.quantityRaw,
+            params.expireTimestampNs,
+            ORDER_TYPE.FILL_OR_KILL,
+            CANCEL_TAKER,
+            zeroAddress,
+            0n,
+            0n,
+          ],
+        }),
+      },
+      {
+        to: params.outcomeToken,
+        data: encodeFunctionData({
+          abi: erc6909Abi,
+          functionName: 'setOperator',
+          args: [params.cashout.poolAddress, false],
+        }),
+      },
+    ],
+  })
+  const batch = await params.wallet.walletClient.waitForCallsStatus({
+    id,
+    throwOnFailure: true,
+    timeout: 60_000,
+  })
+  if (batch.status !== 'success' || !batch.atomic) {
+    throw new PlayerCashoutError(
+      'Your wallet did not complete the cash out atomically',
+      'ORDER_REJECTED',
+    )
+  }
+  const receipts = batch.receipts ?? []
+  const receipt = receipts.at(-1)
+  if (
+    !receipt ||
+    receipts.some((candidate) => candidate.status !== 'success')
+  ) {
+    throw new PlayerCashoutError(
+      'The atomic cash-out receipt was not confirmed',
+      'ORDER_REJECTED',
+    )
+  }
+
+  const [positionAfter, collateralAfter] = await Promise.all([
+    client.getOutcomeBalance({
+      outcomeToken: params.outcomeToken,
+      account: params.wallet.address,
+      id: params.outcomeId,
+    }),
+    client.getErc20Balance(params.collateral, params.wallet.address),
+  ])
+  const filledQuantityRaw =
+    positionAfter >= positionBefore ? 0n : positionBefore - positionAfter
+  const proceedsRaw =
+    collateralAfter >= collateralBefore
+      ? collateralAfter - collateralBefore
+      : 0n
+  const status =
+    filledQuantityRaw <= 0n
+      ? 'unfilled'
+      : filledQuantityRaw < params.cashout.quantityRaw
+        ? 'partial'
+        : 'filled'
+
+  return {
+    status,
+    hash: receipt.transactionHash,
+    requestedQuantityRaw: params.cashout.quantityRaw,
     filledQuantityRaw,
     proceedsRaw,
   }

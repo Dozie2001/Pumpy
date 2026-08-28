@@ -38,6 +38,24 @@ describe('cash-out presentation', () => {
     ).toContain('Wallet 2 of 2')
   })
 
+  it('shows one confirmation when the wallet supports atomic calls', () => {
+    expect(
+      liveCashoutButtonLabel({
+        phase: 'batching',
+        fullExitAvailable: true,
+        authorizationRequired: true,
+      }),
+    ).toBe('1/1 EXIT')
+    expect(
+      liveCashoutGuidance({
+        phase: 'batching',
+        fullExitAvailable: true,
+        authorizationRequired: true,
+        heldPayout: '10.00',
+      }),
+    ).toContain('sell, and revoke atomically')
+  })
+
   it('uses one sell confirmation when the pool is already authorized', () => {
     expect(
       liveCashoutButtonLabel({

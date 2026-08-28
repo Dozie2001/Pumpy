@@ -832,6 +832,7 @@ export function PumpyArcade({
         (result === 'voided' && !canClaim)
       const cashoutBusy =
         cashout.phase === 'checking' ||
+        cashout.phase === 'batching' ||
         cashout.phase === 'approving' ||
         cashout.phase === 'refreshing' ||
         cashout.phase === 'submitting'

@@ -19,6 +19,7 @@ export type CashoutPhase =
   | 'loading'
   | 'ready'
   | 'checking'
+  | 'batching'
   | 'approving'
   | 'refreshing'
   | 'submitting'
@@ -44,6 +45,7 @@ const EMPTY: CashoutState = {
 function isBusyPhase(phase: CashoutPhase): boolean {
   return (
     phase === 'checking' ||
+    phase === 'batching' ||
     phase === 'approving' ||
     phase === 'refreshing' ||
     phase === 'submitting'
@@ -176,17 +178,21 @@ export function usePlayerCashout(params: {
             setState((current) => ({
               ...current,
               phase:
-                step === 'approving'
-                  ? 'approving'
-                  : step === 'refreshing'
-                    ? 'refreshing'
-                    : 'submitting',
+                step === 'batching'
+                  ? 'batching'
+                  : step === 'approving'
+                    ? 'approving'
+                    : step === 'refreshing'
+                      ? 'refreshing'
+                      : 'submitting',
               authorizationRequired:
-                step === 'approving'
+                step === 'batching'
                   ? true
-                  : step === 'placing'
-                    ? (current.authorizationRequired ?? false)
-                    : current.authorizationRequired,
+                  : step === 'approving'
+                    ? true
+                    : step === 'placing'
+                      ? (current.authorizationRequired ?? false)
+                      : current.authorizationRequired,
             })),
         })
         if (outcome.status !== 'filled') {
