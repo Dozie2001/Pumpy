@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Component, useEffect, useState } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
+import type { ConsoleTheme } from '@/components/console/themes'
 import { AppFrame } from '@/components/console/AppFrame'
 import ConsoleCanvas from '@/components/console/ConsoleCanvas'
 import {
@@ -12,15 +13,16 @@ import {
   findPumpyTheme,
   themeBackdrop,
 } from '@/components/console/themes'
-import type { ConsoleTheme } from '@/components/console/themes'
 import { PumpyMenuDrawer } from '@/components/menu/PumpyMenuDrawer'
 import { PumpyArcade } from '@/components/pumpy/PumpyArcade'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
+import { usePlayerWallet } from '@/lib/dreamdex/usePlayerWallet'
 
 export const Route = createFileRoute('/_app')({ component: PumpyApp })
 
 function PumpyApp() {
   const reducedMotion = useReducedMotion()
+  const wallet = usePlayerWallet()
   const [homeSignal, setHomeSignal] = useState(0)
   const [menuOpen, setMenuOpen] = useState(false)
   const [theme, setTheme] = useState<ConsoleTheme>(DEFAULT_THEME)
@@ -43,13 +45,14 @@ function PumpyApp() {
           onMenu={() => setMenuOpen(true)}
           onHome={() => setHomeSignal((value) => value + 1)}
         >
-          <PumpyArcade homeSignal={homeSignal} />
+          <PumpyArcade homeSignal={homeSignal} wallet={wallet} />
         </PumpyConsole>
         <PumpyMenuDrawer
           open={menuOpen}
           onClose={() => setMenuOpen(false)}
           theme={theme}
           onTheme={chooseTheme}
+          wallet={wallet}
         />
       </ConsoleControlsProvider>
     </AppFrame>
@@ -112,7 +115,11 @@ class ConsoleBoundary extends Component<
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
-    console.warn('[Pumpy] 3D unavailable; using accessible device fallback.', error, info)
+    console.warn(
+      '[Pumpy] 3D unavailable; using accessible device fallback.',
+      error,
+      info,
+    )
   }
 
   render() {
@@ -138,8 +145,13 @@ function PumpyDeviceFallback({
       <div className="pumpy-flat-device flex h-full max-h-[920px] w-full max-w-[470px] flex-col rounded-[42px] border border-white/10 bg-[#171d21] p-3 shadow-2xl">
         <div className="flex h-9 items-center justify-between px-3 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-[#a8b5bd]">
           <span className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-pumpy-accent" aria-hidden="true" />
-            {typeof view.status?.left === 'string' ? view.status.left : 'SHANNON'}
+            <span
+              className="h-2 w-2 rounded-full bg-pumpy-accent"
+              aria-hidden="true"
+            />
+            {typeof view.status?.left === 'string'
+              ? view.status.left
+              : 'SHANNON'}
           </span>
           <span>PUMPY</span>
         </div>

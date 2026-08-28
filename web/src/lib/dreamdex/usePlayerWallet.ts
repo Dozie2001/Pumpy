@@ -8,7 +8,9 @@ import {
   readInjectedWallet,
   requestPlayerWallet,
   switchInjectedWalletToShannon,
+  watchInjectedWallet,
 } from './wallet'
+import type { InjectedWalletProvider } from './wallet'
 import type { PlayerWalletState } from './types'
 
 const DISCONNECTED: PlayerWalletState = {
@@ -19,12 +21,15 @@ const DISCONNECTED: PlayerWalletState = {
   session: null,
 }
 
+const WALLET_NOT_FOUND =
+  'No injected EVM wallet was found. Open Pumpy in a wallet browser or install a browser wallet.'
+
 function walletError(error: unknown): string {
   if (
     typeof error === 'object' &&
     error &&
     'code' in error &&
-    error.code === 4_001
+    Number(error.code) === 4_001
   ) {
     return 'Wallet request was rejected'
   }
@@ -35,14 +40,22 @@ export function usePlayerWallet() {
   const [state, setState] = useState<PlayerWalletState>(() =>
     getInjectedWallet()
       ? DISCONNECTED
-      : { ...DISCONNECTED, status: 'unavailable' },
+      : {
+          ...DISCONNECTED,
+          status: 'unavailable',
+          error: WALLET_NOT_FOUND,
+        },
   )
 
-  const sync = useCallback(async () => {
-    const provider = getInjectedWallet()
+  const sync = useCallback(async (provided?: InjectedWalletProvider) => {
+    const provider = provided ?? getInjectedWallet()
     if (!provider) {
       clearPlayerWallet()
-      setState({ ...DISCONNECTED, status: 'unavailable' })
+      setState({
+        ...DISCONNECTED,
+        status: 'unavailable',
+        error: WALLET_NOT_FOUND,
+      })
       return
     }
 
@@ -85,32 +98,57 @@ export function usePlayerWallet() {
   }, [])
 
   useEffect(() => {
-    const provider = getInjectedWallet()
-    if (!provider) return
+    let activeProvider: InjectedWalletProvider | null = null
+    let removeProviderListeners = () => undefined
 
-    const onAccountsChanged = () => void sync()
-    const onChainChanged = () => void sync()
-    const onDisconnect = () => {
-      clearPlayerWallet()
-      setState(DISCONNECTED)
+    const attach = (provider: InjectedWalletProvider) => {
+      if (provider === activeProvider) return
+      removeProviderListeners()
+      activeProvider = provider
+
+      const onAccountsChanged = () => void sync(provider)
+      const onChainChanged = () => void sync(provider)
+      const onDisconnect = () => {
+        clearPlayerWallet()
+        setState(DISCONNECTED)
+      }
+
+      provider.on('accountsChanged', onAccountsChanged)
+      provider.on('chainChanged', onChainChanged)
+      provider.on('disconnect', onDisconnect)
+      removeProviderListeners = () => {
+        provider.removeListener('accountsChanged', onAccountsChanged)
+        provider.removeListener('chainChanged', onChainChanged)
+        provider.removeListener('disconnect', onDisconnect)
+      }
+      void sync(provider)
     }
 
-    provider.on('accountsChanged', onAccountsChanged)
-    provider.on('chainChanged', onChainChanged)
-    provider.on('disconnect', onDisconnect)
-    void sync()
+    const stopWatching = watchInjectedWallet(attach)
+    const initialProvider = getInjectedWallet()
+    if (initialProvider) attach(initialProvider)
+    else {
+      setState({
+        ...DISCONNECTED,
+        status: 'unavailable',
+        error: WALLET_NOT_FOUND,
+      })
+    }
 
     return () => {
-      provider.removeListener('accountsChanged', onAccountsChanged)
-      provider.removeListener('chainChanged', onChainChanged)
-      provider.removeListener('disconnect', onDisconnect)
+      stopWatching()
+      removeProviderListeners()
     }
   }, [sync])
 
   const connect = useCallback(async () => {
     const provider = getInjectedWallet()
     if (!provider) {
-      setState({ ...DISCONNECTED, status: 'unavailable' })
+      setState({
+        ...DISCONNECTED,
+        status: 'unavailable',
+        error: WALLET_NOT_FOUND,
+      })
       return
     }
 
@@ -158,3 +196,5 @@ export function usePlayerWallet() {
 
   return { ...state, connect, switchNetwork, disconnect }
 }
+
+export type PlayerWalletControls = ReturnType<typeof usePlayerWallet>

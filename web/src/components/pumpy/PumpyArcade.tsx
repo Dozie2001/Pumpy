@@ -18,6 +18,7 @@ import type {
   PreparedPlayerTrade,
   PumpyEventMarket,
 } from '@/lib/dreamdex/types'
+import type { PlayerWalletControls } from '@/lib/dreamdex/usePlayerWallet'
 import { useConsoleControls } from '@/components/console/controls'
 import {
   CandleHopEngine,
@@ -52,7 +53,6 @@ import {
   longShotSideForTarget,
 } from '@/lib/dreamdex/longShot'
 import { usePlayerQuote } from '@/lib/dreamdex/usePlayerQuote'
-import { usePlayerWallet } from '@/lib/dreamdex/usePlayerWallet'
 import { useQuickCallRound } from '@/lib/dreamdex/useQuickCallRound'
 import { useTestCollateral } from '@/lib/dreamdex/useTestCollateral'
 import { eventSecondsRemaining } from '@/lib/dreamdex/eventCountdown'
@@ -93,6 +93,7 @@ const STAKES = [1, 5, 10, 25, 50] as const
 const RIM = 'px-[var(--screen-rim,24px)]'
 const RIM_TOP = 'pt-[calc(var(--screen-rim,24px)+6px)]'
 const RIM_BOTTOM = 'pb-[calc(var(--screen-rim,24px)+var(--screen-notch,0px))]'
+const LEFT_READOUT_BOTTOM = 'pb-[var(--screen-rim,24px)]'
 
 const GAMES = [
   {
@@ -125,7 +126,13 @@ const GAMES = [
   },
 ] as const
 
-export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
+export function PumpyArcade({
+  homeSignal = 0,
+  wallet,
+}: {
+  homeSignal?: number
+  wallet: PlayerWalletControls
+}) {
   const [screen, setScreen] = useState<ArcadeScreen>('hub')
   const [asset, setAsset] = useState('BTC')
   const [selectedGame, setSelectedGame] = useState(0)
@@ -163,7 +170,6 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
     selectionIndex: longShotTargetIndex,
   })
   const livePrice = useLiveAssetPrice(asset)
-  const wallet = usePlayerWallet()
   const market = markets.selected
   const stake = STAKES[stakeIndex]
   const quickCall = useQuickCallRound({
@@ -601,10 +607,7 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           format: (value) => `${GAMES.length - value}/${GAMES.length}`,
         },
         main: {
-          label:
-            quickCall.round && selectedIsWalletGame
-              ? 'RESUME'
-              : 'PLAY',
+          label: quickCall.round && selectedIsWalletGame ? 'RESUME' : 'PLAY',
           color: 'amber',
           onPress: () => {
             if (quickCall.round && selectedIsWalletGame) go('position')
@@ -673,13 +676,17 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
                         : 'CHECKING'
                     : wallet.status === 'wrong-network'
                       ? 'SWITCH'
-                      : wallet.status !== 'connected'
-                        ? 'CONNECT'
-                        : ready
-                          ? 'LOCK IN'
-                          : luckyPhase === 'error'
-                            ? 'TRY AGAIN'
-                            : 'QUOTING',
+                      : wallet.status === 'unavailable'
+                        ? 'NO WALLET'
+                        : wallet.status === 'error'
+                          ? 'RETRY'
+                          : wallet.status !== 'connected'
+                            ? 'CONNECT'
+                            : ready
+                              ? 'LOCK IN'
+                              : luckyPhase === 'error'
+                                ? 'TRY AGAIN'
+                                : 'QUOTING',
           color: luckyPhase === 'dealt' ? 'up' : 'amber',
           loading: luckyPhase === 'spinning' || luckyPhase === 'submitting',
           onPress: () => {
@@ -777,13 +784,17 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
                     : 'CHECKING'
                 : wallet.status === 'wrong-network'
                   ? 'SWITCH'
-                  : wallet.status !== 'connected'
-                    ? 'CONNECT'
-                    : ready
-                      ? 'LOCK IN'
-                      : longShotPhase === 'error'
-                        ? 'TRY AGAIN'
-                        : 'QUOTING',
+                  : wallet.status === 'unavailable'
+                    ? 'NO WALLET'
+                    : wallet.status === 'error'
+                      ? 'RETRY'
+                      : wallet.status !== 'connected'
+                        ? 'CONNECT'
+                        : ready
+                          ? 'LOCK IN'
+                          : longShotPhase === 'error'
+                            ? 'TRY AGAIN'
+                            : 'QUOTING',
           color:
             ready && !longShotHowTo
               ? 'up'
@@ -963,6 +974,7 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           livePrice={livePrice}
           collateral={testCollateral}
           walletStatus={wallet.status}
+          walletError={wallet.error}
           walletStep={walletStep}
           orderError={orderError}
           quoteNotice={quoteNotice}
@@ -989,6 +1001,7 @@ export function PumpyArcade({ homeSignal = 0 }: { homeSignal?: number }) {
           livePrice={livePrice}
           collateral={longShotCollateral}
           walletStatus={wallet.status}
+          walletError={wallet.error}
           walletStep={longShotWalletStep}
           orderError={longShotError}
           quoteNotice={longShotNotice}
@@ -1035,7 +1048,7 @@ function GameHub({
   market: PumpyEventMarket | null
   connection: string
   loading: boolean
-  wallet: ReturnType<typeof usePlayerWallet>
+  wallet: PlayerWalletControls
   collateral: ReturnType<typeof useTestCollateral>
   hasRound: boolean
   onAsset: (asset: string) => void
@@ -1214,6 +1227,7 @@ function LongShotGame({
   livePrice,
   collateral,
   walletStatus,
+  walletError,
   walletStep,
   orderError,
   quoteNotice,
@@ -1236,7 +1250,8 @@ function LongShotGame({
   quoteError: string | null
   livePrice: LiveAssetPriceState
   collateral: ReturnType<typeof useTestCollateral>
-  walletStatus: ReturnType<typeof usePlayerWallet>['status']
+  walletStatus: PlayerWalletControls['status']
+  walletError: string | null
   walletStep: WalletStep
   orderError: string | null
   quoteNotice: string | null
@@ -1297,9 +1312,13 @@ function LongShotGame({
         ? 'Refreshing executable odds'
         : walletStatus === 'wrong-network'
           ? 'Press SWITCH to use Shannon'
-          : walletStatus !== 'connected'
-            ? 'Press CONNECT to continue'
-            : 'Press LOCK IN to sign'
+          : walletStatus === 'unavailable'
+            ? 'Open Pumpy in a wallet browser'
+            : walletStatus === 'error'
+              ? 'Press RETRY to reconnect'
+              : walletStatus !== 'connected'
+                ? 'Press CONNECT to continue'
+                : 'Press LOCK IN to sign'
 
   return (
     <div className="relative flex h-full flex-col">
@@ -1328,8 +1347,8 @@ function LongShotGame({
         </div>
       </div>
 
-      <div className="flex h-[68px] shrink-0 items-center justify-center gap-8 border-y border-line-strong bg-black px-[var(--screen-rim,24px)]">
-        <div className="text-center">
+      <div className="grid h-[68px] shrink-0 grid-cols-[1fr_auto_1fr] items-center border-y border-line-strong bg-black px-[var(--screen-rim,24px)]">
+        <div className="min-w-0 pr-5 text-left">
           <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
             Target {targetCount ? `${targetIndex + 1}/${targetCount}` : ''}
           </div>
@@ -1338,7 +1357,7 @@ function LongShotGame({
           </div>
         </div>
         <div className="h-9 w-px bg-line-strong" />
-        <div className="text-center">
+        <div className="min-w-0 pl-5 text-right">
           <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
             Call
           </div>
@@ -1355,7 +1374,7 @@ function LongShotGame({
 
       <LivePriceChart
         state={livePrice}
-        className="min-h-0 flex-1"
+        className="min-h-[104px] flex-1"
         eventCountdown={secondsLeft == null ? null : String(secondsLeft)}
         targetPrice={targetPrice}
         side={previewSide}
@@ -1365,10 +1384,10 @@ function LongShotGame({
         className={cnm(
           'min-h-[var(--screen-notch,21%)] shrink-0 border-t border-line-strong bg-black pt-3.5',
           RIM,
-          RIM_BOTTOM,
+          LEFT_READOUT_BOTTOM,
         )}
       >
-        <div className="max-w-[62%]">
+        <div className="max-w-[64%]">
           {!reviewing ? (
             <>
               <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
@@ -1384,16 +1403,15 @@ function LongShotGame({
                   to target
                 </span>
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
                 <Readout label="Amount" value={`$${stake}`} />
                 <Readout
                   label="Ends"
                   value={secondsLeft == null ? '—' : `${secondsLeft}s`}
                 />
-                <Readout label="Book" value={connection.toUpperCase()} />
               </div>
-              <div className="mt-2 font-mono text-[8px] uppercase leading-[1.4] tracking-[0.06em] text-text-3">
-                Turn TARGET to choose a listed strike, then press REVIEW.
+              <div className="mt-2.5 border-t border-line pt-2 font-mono text-[8px] uppercase leading-[1.4] tracking-[0.06em] text-text-3">
+                DreamDEX {connection} · Turn TARGET, then press REVIEW.
               </div>
             </>
           ) : (
@@ -1402,13 +1420,9 @@ function LongShotGame({
                 Wallet-signed play · quote {quotePhase}
               </div>
               {quote ? (
-                <div className="mt-2 grid grid-cols-3 gap-2">
+                <div className="mt-2 grid grid-cols-2 gap-x-4">
                   <Readout label="Cost" value={`$${formatMoney(premium)}`} />
                   <Readout label="Payout" value={`$${formatMoney(payout)}`} />
-                  <Readout
-                    label="Max loss"
-                    value={`$${formatMoney(premium)}`}
-                  />
                 </div>
               ) : (
                 <div className="mt-2 flex items-center gap-2 font-mono text-[9px] font-bold uppercase text-text-3">
@@ -1419,9 +1433,9 @@ function LongShotGame({
               <div className="mt-2.5 font-mono text-[9px] font-black uppercase tracking-[0.08em] text-brand-500">
                 {nextAction}
               </div>
-              <div className="mt-1 font-mono text-[8px] uppercase leading-[1.35] tracking-[0.06em] text-text-3">
-                Wins only if {asset} settles{' '}
-                {previewSide === 'UP' ? 'at or above' : 'below'}{' '}
+              <div className="mt-2 border-t border-line pt-2 font-mono text-[8px] uppercase leading-[1.35] tracking-[0.06em] text-text-3">
+                Maximum loss ${formatMoney(premium)} · Wins only if {asset}{' '}
+                settles {previewSide === 'UP' ? 'at or above' : 'below'}{' '}
                 {targetPrice == null
                   ? 'the target'
                   : `$${formatPrice(targetPrice)}`}{' '}
@@ -1429,13 +1443,16 @@ function LongShotGame({
               </div>
             </>
           )}
-          {(orderError || quoteError) && (
-            <div className="mt-2 border-l-2 border-down pl-2 font-mono text-[8px] uppercase leading-[1.4] text-down">
-              {orderError ?? quoteError}
+          {(orderError || quoteError || walletError) && (
+            <div
+              className="mt-2 truncate whitespace-nowrap border-l-2 border-down pl-2 font-mono text-[8px] uppercase leading-[1.4] text-down"
+              title={orderError ?? quoteError ?? walletError ?? undefined}
+            >
+              {orderError ?? quoteError ?? walletError}
               {order?.hash ? ` · ${shortId(order.hash)}` : ''}
             </div>
           )}
-          {quoteNotice && !orderError && !quoteError && (
+          {quoteNotice && !orderError && !quoteError && !walletError && (
             <div
               className="mt-2 border-l-2 border-pumpy-caution pl-2 font-mono text-[8px] font-black uppercase leading-[1.4] text-pumpy-caution"
               role="status"
@@ -1514,6 +1531,7 @@ function LuckyGame({
   livePrice,
   collateral,
   walletStatus,
+  walletError,
   walletStep,
   orderError,
   quoteNotice,
@@ -1535,7 +1553,8 @@ function LuckyGame({
   multiplier?: number
   livePrice: LiveAssetPriceState
   collateral: ReturnType<typeof useTestCollateral>
-  walletStatus: ReturnType<typeof usePlayerWallet>['status']
+  walletStatus: PlayerWalletControls['status']
+  walletError: string | null
   walletStep: WalletStep
   orderError: string | null
   quoteNotice: string | null
@@ -1597,9 +1616,13 @@ function LuckyGame({
         ? 'Refreshing executable odds'
         : walletStatus === 'wrong-network'
           ? 'Press SWITCH to use Shannon'
-          : walletStatus !== 'connected'
-            ? 'Press CONNECT to continue'
-            : 'Press LOCK IN to sign'
+          : walletStatus === 'unavailable'
+            ? 'Open Pumpy in a wallet browser'
+            : walletStatus === 'error'
+              ? 'Press RETRY to reconnect'
+              : walletStatus !== 'connected'
+                ? 'Press CONNECT to continue'
+                : 'Press LOCK IN to sign'
 
   return (
     <div className="relative flex h-full flex-col">
@@ -1630,7 +1653,7 @@ function LuckyGame({
 
       <div
         className="relative shrink-0 overflow-hidden border-y border-line-strong bg-black transition-[height] duration-500 ease-out"
-        style={{ height: dealt ? 68 : 180 }}
+        style={{ height: dealt ? 68 : 164 }}
       >
         <div
           className="absolute inset-0 transition-[opacity,transform] duration-300"
@@ -1650,12 +1673,12 @@ function LuckyGame({
           />
         </div>
         <div
-          className="absolute inset-0 flex items-center justify-center gap-8 px-[var(--screen-rim,24px)] transition-opacity duration-300"
+          className="absolute inset-0 grid grid-cols-[1fr_auto_1fr] items-center px-[var(--screen-rim,24px)] transition-opacity duration-300"
           style={{ opacity: dealt ? 1 : 0 }}
         >
           {side && (
             <>
-              <div className="text-center">
+              <div className="min-w-0 pr-5 text-left">
                 <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
                   Direction
                 </div>
@@ -1669,7 +1692,7 @@ function LuckyGame({
                 </div>
               </div>
               <div className="h-9 w-px bg-line-strong" />
-              <div className="text-center">
+              <div className="min-w-0 pl-5 text-right">
                 <div className="font-mono text-[9px] font-black uppercase tracking-[0.15em] text-text-3">
                   Live odds
                 </div>
@@ -1684,7 +1707,7 @@ function LuckyGame({
 
       <LivePriceChart
         state={livePrice}
-        className="flex-1"
+        className="min-h-[104px] flex-1"
         targetPrice={targetPrice}
         side={dealt ? side : null}
       />
@@ -1693,10 +1716,10 @@ function LuckyGame({
         className={cnm(
           'min-h-[var(--screen-notch,21%)] shrink-0 border-t border-line-strong bg-black pt-3.5',
           RIM,
-          RIM_BOTTOM,
+          LEFT_READOUT_BOTTOM,
         )}
       >
-        <div className="max-w-[60%]">
+        <div className="max-w-[64%]">
           {phase === 'idle' && (
             <>
               <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
@@ -1737,10 +1760,9 @@ function LuckyGame({
                 Wallet-signed play
               </div>
               {quote ? (
-                <div className="mt-2 grid grid-cols-3 gap-2">
+                <div className="mt-2 grid grid-cols-2 gap-x-4">
                   <Readout label="Cost" value={`$${formatMoney(premium)}`} />
                   <Readout label="Payout" value={`$${formatMoney(payout)}`} />
-                  <Readout label="Loss" value={`$${formatMoney(premium)}`} />
                 </div>
               ) : (
                 <div className="mt-2 flex items-center gap-2 font-mono text-[9px] font-bold uppercase text-text-3">
@@ -1751,18 +1773,22 @@ function LuckyGame({
               <div className="mt-2.5 font-mono text-[9px] font-black uppercase tracking-[0.08em] text-brand-500">
                 {nextAction}
               </div>
-              <div className="mt-1 font-mono text-[8px] uppercase tracking-[0.06em] text-text-3">
-                Nothing is placed until you approve
+              <div className="mt-2 border-t border-line pt-2 font-mono text-[8px] uppercase tracking-[0.06em] text-text-3">
+                Maximum loss ${formatMoney(premium)} · Nothing is placed until
+                you approve
               </div>
             </>
           )}
-          {(orderError || quoteError) && (
-            <div className="mt-2 border-l-2 border-down pl-2 font-mono text-[8px] uppercase leading-[1.4] text-down">
-              {orderError ?? quoteError}
+          {(orderError || quoteError || walletError) && (
+            <div
+              className="mt-2 truncate whitespace-nowrap border-l-2 border-down pl-2 font-mono text-[8px] uppercase leading-[1.4] text-down"
+              title={orderError ?? quoteError ?? walletError ?? undefined}
+            >
+              {orderError ?? quoteError ?? walletError}
               {order?.hash ? ` · ${shortId(order.hash)}` : ''}
             </div>
           )}
-          {quoteNotice && !orderError && !quoteError && (
+          {quoteNotice && !orderError && !quoteError && !walletError && (
             <div
               className="mt-2 border-l-2 border-pumpy-caution pl-2 font-mono text-[8px] font-black uppercase leading-[1.4] text-pumpy-caution"
               role="status"

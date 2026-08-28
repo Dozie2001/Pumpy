@@ -6,6 +6,7 @@ import {
   Gamepad2,
   History,
   LoaderCircle,
+  LogOut,
   Palette,
   RefreshCw,
   Trophy,
@@ -19,10 +20,10 @@ import type { PortfolioPosition } from '@somnia-chain/markets-sdk'
 
 import type { ConsoleTheme } from '@/components/console/themes'
 import type { PlayerPortfolioState } from '@/lib/dreamdex/usePlayerPortfolio'
+import type { PlayerWalletControls } from '@/lib/dreamdex/usePlayerWallet'
 import type { PumpyPlayerProfile } from '@/lib/pumpy/playerProfile'
 import { PUMPY_THEMES } from '@/components/console/themes'
 import { usePlayerPortfolio } from '@/lib/dreamdex/usePlayerPortfolio'
-import { usePlayerWallet } from '@/lib/dreamdex/usePlayerWallet'
 import {
   profileAchievements,
   readPlayerProfile,
@@ -57,13 +58,14 @@ export function PumpyMenuDrawer({
   onClose,
   theme,
   onTheme,
+  wallet,
 }: {
   open: boolean
   onClose: () => void
   theme: ConsoleTheme
   onTheme: (theme: ConsoleTheme) => void
+  wallet: PlayerWalletControls
 }) {
-  const wallet = usePlayerWallet()
   const chainPortfolio = usePlayerPortfolio(wallet.address, open)
   const [tab, setTab] = useState<Tab>('player')
   const [profile, setProfile] = useState<PumpyPlayerProfile>(EMPTY_PROFILE)
@@ -80,9 +82,13 @@ export function PumpyMenuDrawer({
       } else {
         setProfile(EMPTY_PROFILE)
       }
-      setCandleBest(Number(window.localStorage.getItem('pumpy:candle-hop:best') ?? 0))
+      setCandleBest(
+        Number(window.localStorage.getItem('pumpy:candle-hop:best') ?? 0),
+      )
       setRangeBest(Number(window.localStorage.getItem('pumpy:range:best') ?? 0))
-      setRangeMaxStack(Number(window.localStorage.getItem('pumpy:range:max-stack') ?? 0))
+      setRangeMaxStack(
+        Number(window.localStorage.getItem('pumpy:range:max-stack') ?? 0),
+      )
     }
     refresh()
     window.addEventListener('pumpy:profile-updated', refresh)
@@ -102,9 +108,13 @@ export function PumpyMenuDrawer({
     () => profileAchievements(profile, candleBest, rangeBest, rangeMaxStack),
     [candleBest, profile, rangeBest, rangeMaxStack],
   )
-  const unlocked = achievements.filter((achievement) => achievement.unlocked).length
+  const unlocked = achievements.filter(
+    (achievement) => achievement.unlocked,
+  ).length
   const volume = profile.plays.reduce(
-    (total, play) => total + Number(formatUnits(BigInt(play.premiumRaw), play.collateralDecimals)),
+    (total, play) =>
+      total +
+      Number(formatUnits(BigInt(play.premiumRaw), play.collateralDecimals)),
     0,
   )
 
@@ -126,8 +136,12 @@ export function PumpyMenuDrawer({
       >
         <div className="flex shrink-0 items-center justify-between px-5 pb-3 pt-4">
           <div>
-            <div className="font-mono text-[9px] font-black uppercase tracking-[0.18em] text-brand-500">Pumpy OS</div>
-            <div className="mt-0.5 text-[22px] font-black uppercase leading-none text-text">{TAB_TITLES[tab]}</div>
+            <div className="font-mono text-[9px] font-black uppercase tracking-[0.18em] text-brand-500">
+              Pumpy OS
+            </div>
+            <div className="mt-0.5 text-[22px] font-black uppercase leading-none text-text">
+              {TAB_TITLES[tab]}
+            </div>
           </div>
           <button
             type="button"
@@ -138,7 +152,10 @@ export function PumpyMenuDrawer({
           </button>
         </div>
 
-        <nav className="grid shrink-0 grid-cols-4 border-y border-white/10" aria-label="Player menu sections">
+        <nav
+          className="grid shrink-0 grid-cols-4 border-y border-white/10"
+          aria-label="Player menu sections"
+        >
           {TABS.map((item) => {
             const Icon = item.icon
             const active = tab === item.id
@@ -173,7 +190,18 @@ export function PumpyMenuDrawer({
               candleBest={candleBest}
               unlocked={unlocked}
               totalBadges={achievements.length}
-              onConnect={() => void wallet.connect()}
+              error={wallet.error}
+              onConnect={() => {
+                if (wallet.status === 'wrong-network') {
+                  void wallet.switchNetwork()
+                } else {
+                  void wallet.connect()
+                }
+              }}
+              onDisconnect={() => {
+                haptic('warning')
+                wallet.disconnect()
+              }}
             />
           )}
           {tab === 'history' && (
@@ -195,12 +223,32 @@ export function PumpyMenuDrawer({
                       : 'border-white/9 bg-white/[0.035]',
                   )}
                 >
-                  <div className={cnm('grid h-9 w-9 place-items-center rounded-full', achievement.unlocked ? 'bg-brand-500 text-pumpy-accent-ink' : 'bg-white/8 text-text-3')}>
-                    {achievement.unlocked ? <Trophy className="h-4 w-4" /> : <Award className="h-4 w-4" />}
+                  <div
+                    className={cnm(
+                      'grid h-9 w-9 place-items-center rounded-full',
+                      achievement.unlocked
+                        ? 'bg-brand-500 text-pumpy-accent-ink'
+                        : 'bg-white/8 text-text-3',
+                    )}
+                  >
+                    {achievement.unlocked ? (
+                      <Trophy className="h-4 w-4" />
+                    ) : (
+                      <Award className="h-4 w-4" />
+                    )}
                   </div>
-                  <div className="mt-3 text-[14px] font-black uppercase leading-none text-text">{achievement.name}</div>
-                  <p className="mt-2 text-[10px] font-medium leading-[1.35] text-text-3">{achievement.description}</p>
-                  <div className={cnm('mt-3 font-mono text-[9px] font-black uppercase tracking-[0.1em]', achievement.unlocked ? 'text-brand-500' : 'text-text-3')}>
+                  <div className="mt-3 text-[14px] font-black uppercase leading-none text-text">
+                    {achievement.name}
+                  </div>
+                  <p className="mt-2 text-[10px] font-medium leading-[1.35] text-text-3">
+                    {achievement.description}
+                  </p>
+                  <div
+                    className={cnm(
+                      'mt-3 font-mono text-[9px] font-black uppercase tracking-[0.1em]',
+                      achievement.unlocked ? 'text-brand-500' : 'text-text-3',
+                    )}
+                  >
                     {achievement.unlocked ? 'Unlocked' : achievement.progress}
                   </div>
                 </div>
@@ -210,7 +258,8 @@ export function PumpyMenuDrawer({
           {tab === 'customize' && (
             <div>
               <p className="mb-4 max-w-[36ch] text-[12px] font-medium leading-[1.5] text-text-2">
-                Change the handheld material without changing the game screen or control geometry.
+                Change the handheld material without changing the game screen or
+                control geometry.
               </p>
               <div className="space-y-3">
                 {PUMPY_THEMES.map((option) => {
@@ -225,7 +274,9 @@ export function PumpyMenuDrawer({
                       }}
                       className={cnm(
                         'flex min-h-20 w-full items-center gap-4 rounded-[22px] border p-3 text-left',
-                        active ? 'border-brand-500/55 bg-brand-500/8' : 'border-white/9 bg-white/[0.035]',
+                        active
+                          ? 'border-brand-500/55 bg-brand-500/8'
+                          : 'border-white/9 bg-white/[0.035]',
                       )}
                     >
                       <span
@@ -233,11 +284,18 @@ export function PumpyMenuDrawer({
                         style={{ background: option.body }}
                       >
                         <span className="absolute left-2 top-2 h-5 w-9 rounded-[5px] bg-black" />
-                        <span className="absolute bottom-2 right-2 h-5 w-5 rounded-full" style={{ background: option.main }} />
+                        <span
+                          className="absolute bottom-2 right-2 h-5 w-5 rounded-full"
+                          style={{ background: option.main }}
+                        />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">Skin {option.code}</span>
-                        <span className="mt-1 block text-[18px] font-black uppercase leading-none text-text">{option.name}</span>
+                        <span className="block font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-3">
+                          Skin {option.code}
+                        </span>
+                        <span className="mt-1 block text-[18px] font-black uppercase leading-none text-text">
+                          {option.name}
+                        </span>
                       </span>
                       {active && <Check className="h-5 w-5 text-brand-500" />}
                     </button>
@@ -260,7 +318,9 @@ function PlayerCard({
   candleBest,
   unlocked,
   totalBadges,
+  error,
   onConnect,
+  onDisconnect,
 }: {
   address: string | null
   status: string
@@ -269,59 +329,136 @@ function PlayerCard({
   candleBest: number
   unlocked: number
   totalBadges: number
+  error: string | null
   onConnect: () => void
+  onDisconnect: () => void
 }) {
-  const handle = address ? `player_${address.slice(2, 6).toLowerCase()}` : 'guest_player'
+  const handle = address
+    ? `player_${address.slice(2, 6).toLowerCase()}`
+    : 'guest_player'
   return (
     <div>
       <div className="overflow-hidden rounded-[28px] border border-white/10 bg-gradient-to-br from-[#18202d] via-[#111621] to-black p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="grid h-14 w-14 place-items-center rounded-full border border-brand-500/35 bg-brand-500/12 text-[24px] font-black text-brand-500">P</div>
+            <div className="grid h-14 w-14 place-items-center rounded-full border border-brand-500/35 bg-brand-500/12 text-[24px] font-black text-brand-500">
+              P
+            </div>
             <div>
-              <div className="text-[21px] font-black lowercase leading-none text-text">{handle}</div>
+              <div className="text-[21px] font-black lowercase leading-none text-text">
+                {handle}
+              </div>
               <div className="mt-1.5 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-text-3">
-                {address ? `${address.slice(0, 7)}…${address.slice(-5)}` : 'No wallet connected'}
+                {address
+                  ? `${address.slice(0, 7)}…${address.slice(-5)}`
+                  : 'No wallet connected'}
               </div>
             </div>
           </div>
-          <span className="rounded-full border border-up/30 bg-up/10 px-2.5 py-1 font-mono text-[8px] font-black uppercase tracking-[0.1em] text-up">
-            Shannon
+          <span
+            className={cnm(
+              'rounded-full border px-2.5 py-1 font-mono text-[8px] font-black uppercase tracking-[0.1em]',
+              status === 'connected'
+                ? 'border-up/30 bg-up/10 text-up'
+                : status === 'wrong-network' || status === 'error'
+                  ? 'border-pumpy-caution/35 bg-pumpy-caution/10 text-pumpy-caution'
+                  : 'border-white/10 bg-white/5 text-text-3',
+            )}
+          >
+            {status === 'connected'
+              ? 'Shannon'
+              : status === 'wrong-network'
+                ? 'Wrong network'
+                : status === 'unavailable'
+                  ? 'No wallet'
+                  : 'Guest'}
           </span>
         </div>
         <div className="mt-6">
-          <div className="font-mono text-[9px] font-black uppercase tracking-[0.16em] text-text-3">Arcade volume</div>
-          <div className="mt-1 text-[45px] font-black leading-none text-brand-500">${volume.toFixed(2)}</div>
+          <div className="font-mono text-[9px] font-black uppercase tracking-[0.16em] text-text-3">
+            Arcade volume
+          </div>
+          <div className="mt-1 text-[45px] font-black leading-none text-brand-500">
+            ${volume.toFixed(2)}
+          </div>
         </div>
         <div className="mt-5 grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 pt-4">
           <CardStat label="Plays" value={String(plays)} icon={Gamepad2} />
-          <CardStat label="Candle best" value={String(candleBest)} icon={Clock3} />
-          <CardStat label="Badges" value={`${unlocked}/${totalBadges}`} icon={Trophy} />
+          <CardStat
+            label="Candle best"
+            value={String(candleBest)}
+            icon={Clock3}
+          />
+          <CardStat
+            label="Badges"
+            value={`${unlocked}/${totalBadges}`}
+            icon={Trophy}
+          />
         </div>
       </div>
-      {!address && (
+      {status !== 'connected' && (
         <button
           type="button"
           onClick={onConnect}
-          className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-[20px] bg-brand-500 px-4 font-black uppercase text-pumpy-accent-ink"
+          disabled={status === 'connecting' || status === 'unavailable'}
+          aria-busy={status === 'connecting'}
+          className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-[20px] bg-brand-500 px-4 font-black uppercase text-pumpy-accent-ink focus-visible:ring-2 focus-visible:ring-white disabled:cursor-not-allowed disabled:bg-white/8 disabled:text-text-3"
         >
-          <WalletCards className="h-5 w-5" />
-          {status === 'connecting' ? 'Check wallet' : 'Connect wallet'}
+          <WalletCards className="h-5 w-5" aria-hidden="true" />
+          {status === 'connecting'
+            ? 'Check wallet'
+            : status === 'wrong-network'
+              ? 'Switch to Shannon'
+              : status === 'unavailable'
+                ? 'Wallet not found'
+                : status === 'error'
+                  ? 'Try wallet again'
+                  : 'Connect wallet'}
         </button>
       )}
+      {status === 'connected' && (
+        <button
+          type="button"
+          onClick={onDisconnect}
+          className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-[20px] border border-down/35 bg-down/10 px-4 font-black uppercase text-down transition-colors hover:bg-down/15 focus-visible:ring-2 focus-visible:ring-down"
+        >
+          <LogOut className="h-5 w-5" aria-hidden="true" />
+          Disconnect wallet
+        </button>
+      )}
+      {error && status !== 'connected' && (
+        <p
+          className="mt-3 rounded-[16px] border border-pumpy-caution/30 bg-pumpy-caution/[0.08] px-3 py-2 text-[10px] leading-[1.45] text-pumpy-caution"
+          role="status"
+        >
+          {error}
+        </p>
+      )}
       <p className="mt-4 px-2 text-[11px] leading-[1.5] text-text-3">
-        Privy usernames and social profiles come after the game loop is stable. For now your player card is tied to the wallet that signs each DreamDEX play.
+        Your player card follows the wallet that signs each DreamDEX play.
       </p>
     </div>
   )
 }
 
-function CardStat({ label, value, icon: Icon }: { label: string; value: string; icon: typeof Gamepad2 }) {
+function CardStat({
+  label,
+  value,
+  icon: Icon,
+}: {
+  label: string
+  value: string
+  icon: typeof Gamepad2
+}) {
   return (
     <div className="px-3 first:pl-0 last:pr-0">
       <Icon className="h-4 w-4 text-text-3" />
-      <div className="mt-2 text-[19px] font-black leading-none text-text">{value}</div>
-      <div className="mt-1 font-mono text-[8px] font-black uppercase tracking-[0.09em] text-text-3">{label}</div>
+      <div className="mt-2 text-[19px] font-black leading-none text-text">
+        {value}
+      </div>
+      <div className="mt-1 font-mono text-[8px] font-black uppercase tracking-[0.09em] text-text-3">
+        {label}
+      </div>
     </div>
   )
 }
@@ -343,7 +480,10 @@ function PortfolioPanel({
       (entry) => entry.market.id.toLowerCase() === claim.marketId.toLowerCase(),
     )
     if (!position) return total
-    return total + Number(formatUnits(claim.estPayout, position.market.quoteDecimals))
+    return (
+      total +
+      Number(formatUnits(claim.estPayout, position.market.quoteDecimals))
+    )
   }, 0)
 
   return (
@@ -351,8 +491,12 @@ function PortfolioPanel({
       <div className="overflow-hidden rounded-[26px] border border-white/10 bg-[#10151d]">
         <div className="flex items-center justify-between px-4 pb-3 pt-4">
           <div>
-            <div className="font-mono text-[8px] font-black uppercase tracking-[0.16em] text-text-3">DreamDEX portfolio</div>
-            <div className="mt-1 text-[18px] font-black uppercase leading-none text-text">Your positions</div>
+            <div className="font-mono text-[8px] font-black uppercase tracking-[0.16em] text-text-3">
+              DreamDEX portfolio
+            </div>
+            <div className="mt-1 text-[18px] font-black uppercase leading-none text-text">
+              Your positions
+            </div>
           </div>
           <button
             type="button"
@@ -361,13 +505,25 @@ function PortfolioPanel({
             aria-label="Refresh DreamDEX portfolio"
             className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-text-2 transition active:scale-90 disabled:opacity-50"
           >
-            <RefreshCw className={cnm('h-4 w-4', state.phase === 'loading' && 'animate-spin')} />
+            <RefreshCw
+              className={cnm(
+                'h-4 w-4',
+                state.phase === 'loading' && 'animate-spin',
+              )}
+            />
           </button>
         </div>
 
         <div className="border-t border-white/8 bg-black/35 px-4 py-4">
-          <div className="font-mono text-[8px] font-black uppercase tracking-[0.14em] text-text-3">Estimated claimable</div>
-          <div className={cnm('mt-1 text-[38px] font-black leading-none tabular-nums', claimablePayout > 0 ? 'text-brand-500' : 'text-text')}>
+          <div className="font-mono text-[8px] font-black uppercase tracking-[0.14em] text-text-3">
+            Estimated claimable
+          </div>
+          <div
+            className={cnm(
+              'mt-1 text-[38px] font-black leading-none tabular-nums',
+              claimablePayout > 0 ? 'text-brand-500' : 'text-text',
+            )}
+          >
             ${claimablePayout.toFixed(2)}
           </div>
           <div className="mt-4 grid grid-cols-3 divide-x divide-white/8 border-t border-white/8 pt-3">
@@ -387,7 +543,8 @@ function PortfolioPanel({
       )}
       {state.phase === 'loading' && !state.portfolio && (
         <div className="flex min-h-36 items-center justify-center gap-2 font-mono text-[9px] font-black uppercase tracking-[0.1em] text-text-3">
-          <LoaderCircle className="h-4 w-4 animate-spin" /> Reading Event Contracts
+          <LoaderCircle className="h-4 w-4 animate-spin" /> Reading Event
+          Contracts
         </div>
       )}
       {state.error && (
@@ -406,7 +563,8 @@ function PortfolioPanel({
                 position={position}
                 claimable={state.claimable.some(
                   (claim) =>
-                    claim.marketId.toLowerCase() === position.market.id.toLowerCase() &&
+                    claim.marketId.toLowerCase() ===
+                      position.market.id.toLowerCase() &&
                     claim.outcomeIdx === position.outcomeIndex,
                 )}
               />
@@ -426,20 +584,42 @@ function PortfolioPanel({
         {profile.plays.length ? (
           <div className="mt-2 overflow-hidden rounded-[22px] border border-white/9 bg-white/[0.025]">
             {profile.plays.map((play) => (
-              <div key={play.id} className="flex items-center gap-3 border-b border-white/8 p-3 last:border-b-0">
-                <div className={cnm('grid h-10 w-10 place-items-center rounded-full font-black', play.side === 'UP' ? 'bg-up/12 text-up' : 'bg-down/12 text-down')}>
+              <div
+                key={play.id}
+                className="flex items-center gap-3 border-b border-white/8 p-3 last:border-b-0"
+              >
+                <div
+                  className={cnm(
+                    'grid h-10 w-10 place-items-center rounded-full font-black',
+                    play.side === 'UP'
+                      ? 'bg-up/12 text-up'
+                      : 'bg-down/12 text-down',
+                  )}
+                >
                   {play.side === 'UP' ? '↑' : '↓'}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[15px] font-black uppercase text-text">{play.asset} {play.side}</div>
+                  <div className="text-[15px] font-black uppercase text-text">
+                    {play.asset} {play.side}
+                  </div>
                   <div className="mt-1 font-mono text-[8px] uppercase tracking-[0.08em] text-text-3">
                     {play.game === 'long-shot' ? 'Long Shot' : 'Lucky'} ·{' '}
                     {formatActivityTime(play.submittedAt)} · {play.status}
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="font-mono text-[12px] font-black text-text">${Number(formatUnits(BigInt(play.premiumRaw), play.collateralDecimals)).toFixed(2)}</div>
-                  <div className="mt-1 font-mono text-[8px] uppercase text-text-3">{play.collateralSymbol}</div>
+                  <div className="font-mono text-[12px] font-black text-text">
+                    $
+                    {Number(
+                      formatUnits(
+                        BigInt(play.premiumRaw),
+                        play.collateralDecimals,
+                      ),
+                    ).toFixed(2)}
+                  </div>
+                  <div className="mt-1 font-mono text-[8px] uppercase text-text-3">
+                    {play.collateralSymbol}
+                  </div>
                 </div>
               </div>
             ))}
@@ -447,7 +627,9 @@ function PortfolioPanel({
         ) : (
           <div className="mt-2 rounded-[22px] border border-dashed border-white/10 px-4 py-7 text-center">
             <History className="mx-auto h-6 w-6 text-text-3" />
-            <p className="mt-2 text-[11px] text-text-3">No wallet-signed arcade plays yet.</p>
+            <p className="mt-2 text-[11px] text-text-3">
+              No wallet-signed arcade plays yet.
+            </p>
           </div>
         )}
       </section>
@@ -455,10 +637,17 @@ function PortfolioPanel({
   )
 }
 
-function PositionRow({ position, claimable }: { position: PortfolioPosition; claimable: boolean }) {
+function PositionRow({
+  position,
+  claimable,
+}: {
+  position: PortfolioPosition
+  claimable: boolean
+}) {
   const side = position.outcomeIndex === 0 ? 'YES' : 'NO'
   const resolved = position.market.winningOutcome != null
-  const won = resolved && position.market.winningOutcome === position.outcomeIndex
+  const won =
+    resolved && position.market.winningOutcome === position.outcomeIndex
   const status = claimable
     ? 'Claimable'
     : position.market.voided
@@ -473,7 +662,12 @@ function PositionRow({ position, claimable }: { position: PortfolioPosition; cla
 
   return (
     <div className="flex items-center gap-3 border-b border-white/8 p-3 last:border-b-0">
-      <div className={cnm('grid h-10 w-10 shrink-0 place-items-center rounded-full text-[16px] font-black', side === 'YES' ? 'bg-up/12 text-up' : 'bg-down/12 text-down')}>
+      <div
+        className={cnm(
+          'grid h-10 w-10 shrink-0 place-items-center rounded-full text-[16px] font-black',
+          side === 'YES' ? 'bg-up/12 text-up' : 'bg-down/12 text-down',
+        )}
+      >
         {side === 'YES' ? '↑' : '↓'}
       </div>
       <div className="min-w-0 flex-1">
@@ -481,14 +675,25 @@ function PositionRow({ position, claimable }: { position: PortfolioPosition; cla
           {position.market.asset} · {side}
         </div>
         <div className="mt-1 truncate font-mono text-[8px] uppercase tracking-[0.07em] text-text-3">
-          {position.market.interval ?? 'Event'} · {formatExpiry(position.market.expiry)}
+          {position.market.interval ?? 'Event'} ·{' '}
+          {formatExpiry(position.market.expiry)}
         </div>
       </div>
       <div className="text-right">
         <div className="font-mono text-[12px] font-black text-text tabular-nums">
-          {Number(formatUnits(BigInt(position.balance), position.market.quoteDecimals)).toFixed(2)}
+          {Number(
+            formatUnits(
+              BigInt(position.balance),
+              position.market.quoteDecimals,
+            ),
+          ).toFixed(2)}
         </div>
-        <div className={cnm('mt-1 font-mono text-[8px] font-black uppercase', positive ? 'text-up' : negative ? 'text-down' : 'text-text-3')}>
+        <div
+          className={cnm(
+            'mt-1 font-mono text-[8px] font-black uppercase',
+            positive ? 'text-up' : negative ? 'text-down' : 'text-text-3',
+          )}
+        >
           {status}
         </div>
       </div>
@@ -499,8 +704,12 @@ function PositionRow({ position, claimable }: { position: PortfolioPosition; cla
 function PortfolioStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="px-3 first:pl-0 last:pr-0">
-      <div className="text-[18px] font-black leading-none text-text tabular-nums">{value}</div>
-      <div className="mt-1 font-mono text-[7px] font-black uppercase tracking-[0.08em] text-text-3">{label}</div>
+      <div className="text-[18px] font-black leading-none text-text tabular-nums">
+        {value}
+      </div>
+      <div className="mt-1 font-mono text-[7px] font-black uppercase tracking-[0.08em] text-text-3">
+        {label}
+      </div>
     </div>
   )
 }
@@ -508,7 +717,9 @@ function PortfolioStat({ label, value }: { label: string; value: string }) {
 function SectionHeading({ label, count }: { label: string; count: number }) {
   return (
     <div className="flex items-center justify-between px-1">
-      <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-2">{label}</div>
+      <div className="font-mono text-[9px] font-black uppercase tracking-[0.14em] text-text-2">
+        {label}
+      </div>
       <div className="font-mono text-[9px] font-black text-text-3">{count}</div>
     </div>
   )
@@ -526,8 +737,12 @@ function PortfolioNotice({
   return (
     <div className="mt-4 rounded-[22px] border border-dashed border-white/10 px-4 py-7 text-center">
       <Icon className="mx-auto h-7 w-7 text-text-3" />
-      <div className="mt-3 text-[17px] font-black uppercase text-text">{title}</div>
-      <p className="mx-auto mt-2 max-w-[30ch] text-[11px] leading-[1.45] text-text-3">{body}</p>
+      <div className="mt-3 text-[17px] font-black uppercase text-text">
+        {title}
+      </div>
+      <p className="mx-auto mt-2 max-w-[30ch] text-[11px] leading-[1.45] text-text-3">
+        {body}
+      </p>
     </div>
   )
 }

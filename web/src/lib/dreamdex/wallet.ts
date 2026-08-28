@@ -14,6 +14,12 @@ declare global {
   }
 }
 
+type Eip6963Detail = {
+  provider?: InjectedWalletProvider
+}
+
+let announcedProvider: InjectedWalletProvider | null = null
+
 const SHANNON_CHAIN_HEX = `0x${SHANNON_CHAIN_ID.toString(16)}`
 
 function providerErrorCode(error: unknown): number | null {
@@ -24,7 +30,46 @@ function providerErrorCode(error: unknown): number | null {
 }
 
 export function getInjectedWallet(): InjectedWalletProvider | null {
-  return typeof window === 'undefined' ? null : (window.ethereum ?? null)
+  return typeof window === 'undefined'
+    ? null
+    : (window.ethereum ?? announcedProvider)
+}
+
+/**
+ * Watch both legacy injection and EIP-6963 announcements. Production bundles
+ * can hydrate before a wallet extension injects `window.ethereum`; listening
+ * here prevents that timing difference from permanently leaving the UI in an
+ * unavailable state.
+ */
+export function watchInjectedWallet(
+  onProvider: (provider: InjectedWalletProvider) => void,
+): () => void {
+  if (typeof window === 'undefined') return () => undefined
+
+  const publishCurrent = () => {
+    const provider = getInjectedWallet()
+    if (provider) onProvider(provider)
+  }
+  const onAnnounce = (event: Event) => {
+    const detail = (event as CustomEvent<Eip6963Detail | undefined>).detail
+    if (!detail?.provider) return
+    announcedProvider ??= detail.provider
+    publishCurrent()
+  }
+
+  window.addEventListener('eip6963:announceProvider', onAnnounce)
+  window.addEventListener('ethereum#initialized', publishCurrent)
+  window.dispatchEvent(new Event('eip6963:requestProvider'))
+
+  const poll = window.setInterval(publishCurrent, 250)
+  const stopPolling = window.setTimeout(() => window.clearInterval(poll), 2_000)
+
+  return () => {
+    window.removeEventListener('eip6963:announceProvider', onAnnounce)
+    window.removeEventListener('ethereum#initialized', publishCurrent)
+    window.clearInterval(poll)
+    window.clearTimeout(stopPolling)
+  }
 }
 
 export async function readInjectedWallet(

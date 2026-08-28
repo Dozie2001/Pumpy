@@ -61,6 +61,7 @@ export function LivePriceChart({
 
     let width = 0
     let height = 0
+    let safeRim = 24
     let frame = 0
     let lastFrame = performance.now()
     let displayedPrice = targetPriceRef.current ?? 0
@@ -75,6 +76,12 @@ export function LivePriceChart({
       const ratio = Math.min(window.devicePixelRatio || 1, 2)
       width = Math.max(1, rect.width)
       height = Math.max(1, rect.height)
+      safeRim = Math.max(
+        12,
+        Number.parseFloat(
+          getComputedStyle(canvas).getPropertyValue('--screen-rim'),
+        ) || 24,
+      )
       canvas.width = Math.round(width * ratio)
       canvas.height = Math.round(height * ratio)
       context.setTransform(ratio, 0, 0, ratio, 0, 0)
@@ -200,6 +207,8 @@ export function LivePriceChart({
             context,
             targetY,
             width,
+            height,
+            safeRim,
             marketTarget,
             sideRef.current,
             displayedPrice,
@@ -311,6 +320,8 @@ function drawMarketTarget(
   context: CanvasRenderingContext2D,
   y: number,
   width: number,
+  height: number,
+  safeRim: number,
   targetPrice: number,
   side: PlayerSide | null | undefined,
   livePrice: number,
@@ -336,14 +347,22 @@ function drawMarketTarget(
 
   context.font = '700 8px ui-monospace, SFMono-Regular, monospace'
   const labelWidth = context.measureText(label).width + 12
-  const labelY = Math.max(2, Math.min(y - 16, 58))
+  const labelHeight = 16
+  const labelX = Math.max(safeRim, width - safeRim - labelWidth)
+  const preferredY = side === 'DOWN' ? y + 6 : y - labelHeight - 6
+  const labelY = clamp(preferredY, TOP_PAD, height - BOTTOM_PAD - labelHeight)
   context.globalAlpha = 0.92
   context.fillStyle = 'rgb(7, 9, 15)'
-  context.fillRect(5, labelY, labelWidth, 14)
+  context.fillRect(labelX, labelY, labelWidth, labelHeight)
   context.strokeStyle = color
-  context.strokeRect(5.5, labelY + 0.5, labelWidth - 1, 13)
+  context.strokeRect(
+    labelX + 0.5,
+    labelY + 0.5,
+    labelWidth - 1,
+    labelHeight - 1,
+  )
   context.fillStyle = color
-  context.fillText(label, 11, labelY + 10)
+  context.fillText(label, labelX + 6, labelY + 11)
   context.restore()
 }
 
