@@ -4,6 +4,7 @@ import {
   createQuickCallRound,
   deriveQuickCallSnapshot,
   readQuickCallRound,
+  removeQuickCallRound,
   writeQuickCallRound,
 } from './quickCall'
 import type {
@@ -47,6 +48,7 @@ describe('Quick Call persistence and reconciliation', () => {
     const storage = {
       getItem: (key: string) => values.get(key) ?? null,
       setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
     }
     const round = createQuickCallRound({
       account: address,
@@ -60,6 +62,65 @@ describe('Quick Call persistence and reconciliation', () => {
     expect(round.filledQuantityRaw).toBe('8000000')
     expect(round.escrowRaw).toBe('4800000')
     expect(round.game).toBe('lucky')
+  })
+
+  it('stores Lucky and Long Shot positions independently for one wallet', () => {
+    const values = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    }
+    const lucky = createQuickCallRound({
+      account: address,
+      game: 'lucky',
+      market,
+      trade,
+      outcome,
+    })
+    const longShot = createQuickCallRound({
+      account: address,
+      game: 'long-shot',
+      market: { ...market, marketId: `0x${'77'.repeat(32)}` },
+      trade,
+      outcome: { ...outcome, hash: `0x${'88'.repeat(32)}` },
+    })
+
+    writeQuickCallRound(storage, lucky)
+    writeQuickCallRound(storage, longShot)
+
+    expect(readQuickCallRound(storage, address, 'lucky')).toEqual(lucky)
+    expect(readQuickCallRound(storage, address, 'long-shot')).toEqual(longShot)
+
+    removeQuickCallRound(storage, address, 'lucky')
+    expect(readQuickCallRound(storage, address, 'lucky')).toBeNull()
+    expect(readQuickCallRound(storage, address, 'long-shot')).toEqual(longShot)
+  })
+
+  it('loads and clears an existing production v1 position in its own game', () => {
+    const values = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    }
+    const legacyLongShot = createQuickCallRound({
+      account: address,
+      game: 'long-shot',
+      market,
+      trade,
+      outcome,
+    })
+    const legacyKey = `pumpy:quick-call:v1:${address.toLowerCase()}`
+    values.set(legacyKey, JSON.stringify(legacyLongShot))
+
+    expect(readQuickCallRound(storage, address, 'lucky')).toBeNull()
+    expect(readQuickCallRound(storage, address, 'long-shot')).toEqual(
+      legacyLongShot,
+    )
+
+    removeQuickCallRound(storage, address, 'long-shot')
+    expect(values.has(legacyKey)).toBe(false)
   })
 
   it('keeps the originating game for resume and result copy', () => {

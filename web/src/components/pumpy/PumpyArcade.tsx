@@ -18,6 +18,7 @@ import type {
   PlayerSide,
   PreparedPlayerTrade,
   PumpyEventMarket,
+  PumpyPlayerGame,
 } from '@/lib/dreamdex/types'
 import type { PlayerWalletControls } from '@/lib/dreamdex/usePlayerWallet'
 import { useConsoleControls } from '@/components/console/controls'
@@ -141,6 +142,7 @@ export function PumpyArcade({
   wallet: PlayerWalletControls
 }) {
   const [screen, setScreen] = useState<ArcadeScreen>('hub')
+  const [positionGame, setPositionGame] = useState<PumpyPlayerGame>('lucky')
   const [asset, setAsset] = useState('BTC')
   const [selectedGame, setSelectedGame] = useState(0)
   const [stakeIndex, setStakeIndex] = useState(1)
@@ -179,10 +181,17 @@ export function PumpyArcade({
   const livePrice = useLiveAssetPrice(asset)
   const market = markets.selected
   const stake = STAKES[stakeIndex]
-  const quickCall = useQuickCallRound({
+  const luckyCall = useQuickCallRound({
     address: wallet.address,
     session: wallet.session,
+    game: 'lucky',
   })
+  const longShotCall = useQuickCallRound({
+    address: wallet.address,
+    session: wallet.session,
+    game: 'long-shot',
+  })
+  const quickCall = positionGame === 'long-shot' ? longShotCall : luckyCall
   const cashout = usePlayerCashout({
     round: quickCall.round,
     positionRaw: quickCall.snapshot?.positionRaw ?? 0n,
@@ -321,10 +330,15 @@ export function PumpyArcade({
   const launchSelected = useCallback(
     (index = selectedGame) => {
       const selected = GAMES[index]
-      if (
-        quickCall.round &&
-        (selected.id === 'lucky' || selected.id === 'long-shot')
-      ) {
+      if (selected.id === 'lucky' && luckyCall.round) {
+        setPositionGame('lucky')
+        setAsset(luckyCall.round.asset)
+        go('position')
+        return
+      }
+      if (selected.id === 'long-shot' && longShotCall.round) {
+        setPositionGame('long-shot')
+        setAsset(longShotCall.round.asset)
         go('position')
         return
       }
@@ -333,7 +347,7 @@ export function PumpyArcade({
       if (selected.id === 'range') go('range')
       if (selected.id === 'candle-hop') go('candle-hop')
     },
-    [go, quickCall.round, selectedGame],
+    [go, longShotCall.round, luckyCall.round, selectedGame],
   )
 
   const spin = useCallback(() => {
@@ -448,8 +462,7 @@ export function PumpyArcade({
       setLongShotWalletStep(null)
       setLongShotOrder(outcome)
       if (outcome.status === 'filled' || outcome.status === 'partial') {
-        quickCall.recordOrder({
-          game: 'long-shot',
+        longShotCall.recordOrder({
           market: longShotMarket,
           trade: longShotQuote.quote,
           outcome,
@@ -465,6 +478,7 @@ export function PumpyArcade({
         void longShotCollateral.refresh()
         moonshotFire()
         haptic('success')
+        setPositionGame('long-shot')
         go('position')
       } else {
         haptic('warning')
@@ -503,7 +517,7 @@ export function PumpyArcade({
     longShotPhase,
     longShotQuote,
     longShotSide,
-    quickCall,
+    longShotCall,
     longShotCollateral,
     wallet,
   ])
@@ -537,7 +551,7 @@ export function PumpyArcade({
       setWalletStep(null)
       setLastOrder(outcome)
       if (outcome.status === 'filled' || outcome.status === 'partial') {
-        quickCall.recordOrder({ market, trade: quote.quote, outcome })
+        luckyCall.recordOrder({ market, trade: quote.quote, outcome })
         recordPlayerTrade({
           storage: window.localStorage,
           account: wallet.address!,
@@ -547,6 +561,7 @@ export function PumpyArcade({
         })
         void testCollateral.refresh()
         haptic('success')
+        setPositionGame('lucky')
         go('position')
       } else {
         haptic('warning')
@@ -579,7 +594,7 @@ export function PumpyArcade({
       )
       setLuckyPhase('error')
     }
-  }, [go, luckyPhase, market, quote, quickCall, side, testCollateral, wallet])
+  }, [go, luckyCall, luckyPhase, market, quote, side, testCollateral, wallet])
 
   const performCashout = useCallback(async () => {
     const outcome = await cashout.cashOut()
@@ -594,7 +609,12 @@ export function PumpyArcade({
 
   const controls = useMemo<ConsoleControls>(() => {
     if (screen === 'hub') {
-      const selectedIsWalletGame = selectedGame === 0 || selectedGame === 1
+      const selectedRound =
+        selectedGame === 0
+          ? luckyCall.round
+          : selectedGame === 1
+            ? longShotCall.round
+            : null
       return {
         action1: {
           label: 'PREV',
@@ -617,12 +637,9 @@ export function PumpyArcade({
           format: (value) => `${GAMES.length - value}/${GAMES.length}`,
         },
         main: {
-          label: quickCall.round && selectedIsWalletGame ? 'RESUME' : 'PLAY',
+          label: selectedRound ? 'RESUME' : 'PLAY',
           color: 'amber',
-          onPress: () => {
-            if (quickCall.round && selectedIsWalletGame) go('position')
-            else launchSelected()
-          },
+          onPress: () => launchSelected(),
         },
         status: {
           left: `${asset} · SHANNON`,
@@ -901,12 +918,14 @@ export function PumpyArcade({
     longShotCandidates.length,
     longShotHowTo,
     longShotMarket,
+    longShotCall,
     longShotPhase,
     longShotQuote.phase,
     longShotRepriceAt,
     longShotTargetIndex,
     longShotWalletStep,
     luckyPhase,
+    luckyCall,
     luckyHowTo,
     market,
     markets.connection,
@@ -956,7 +975,13 @@ export function PumpyArcade({
           loading={markets.phase === 'loading'}
           wallet={wallet}
           collateral={testCollateral}
-          hasRound={Boolean(quickCall.round)}
+          hasRound={Boolean(
+            selectedGame === 0
+              ? luckyCall.round
+              : selectedGame === 1
+                ? longShotCall.round
+                : null,
+          )}
           onAsset={setAsset}
           onSelect={setSelectedGame}
           onLaunch={(index) => {
@@ -2254,6 +2279,42 @@ function LuckyPosition({
                       : 'DreamDEX voided this market. Refund availability is still syncing.',
                 }
 
+  const payoutReadout = (() => {
+    switch (result) {
+      case 'lost':
+        return { label: 'Payout', value: '$0.00' }
+      case 'cashed-out':
+        return { label: 'Payout', value: `$${realizedCashoutProceeds}` }
+      case 'voided':
+        return { label: 'Refund', value: `$${refund}` }
+      default:
+        return { label: 'Payout', value: `$${payout}` }
+    }
+  })()
+  const resultReadout = (() => {
+    switch (result) {
+      case 'lost':
+        return { label: 'Lost', value: `−$${cost}`, tone: 'negative' as const }
+      case 'cashed-out':
+        return {
+          label: 'Realized P/L',
+          value: presentation.value,
+          tone:
+            realizedCashoutDirection === 'loss'
+              ? ('negative' as const)
+              : realizedCashoutDirection === 'even'
+                ? ('default' as const)
+                : ('positive' as const),
+        }
+      default:
+        return {
+          label: 'Profit',
+          value: `+$${profit}`,
+          tone: 'positive' as const,
+        }
+    }
+  })()
+
   return (
     <div className="flex h-full flex-col">
       <div
@@ -2270,44 +2331,11 @@ function LuckyPosition({
       <GameSettlementScreen {...presentation}>
         <div className="mx-auto mt-5 grid max-w-[280px] grid-cols-3 gap-4 border-y border-white/10 py-3 text-left">
           <Readout label="Cost" value={`$${cost}`} />
+          <Readout label={payoutReadout.label} value={payoutReadout.value} />
           <Readout
-            label={result === 'voided' ? 'Refund' : 'Payout'}
-            value={
-              result === 'lost'
-                ? '$0.00'
-                : result === 'cashed-out'
-                  ? `$${moneyFromRaw(
-                      BigInt(round.cashoutProceedsRaw ?? '0'),
-                      round.collateralDecimals,
-                    )}`
-                  : result === 'voided'
-                    ? `$${refund}`
-                    : `$${payout}`
-            }
-          />
-          <Readout
-            label={
-              result === 'lost'
-                ? 'Lost'
-                : result === 'cashed-out'
-                  ? 'Realized P/L'
-                  : 'Profit'
-            }
-            value={
-              result === 'lost'
-                ? `−$${cost}`
-                : result === 'cashed-out'
-                  ? presentation.value
-                  : `+$${profit}`
-            }
-            tone={
-              result === 'lost' ||
-              (result === 'cashed-out' && realizedCashoutDirection === 'loss')
-                ? 'negative'
-                : result === 'cashed-out' && realizedCashoutDirection === 'even'
-                  ? 'default'
-                  : 'positive'
-            }
+            label={resultReadout.label}
+            value={resultReadout.value}
+            tone={resultReadout.tone}
           />
         </div>
         {error && (

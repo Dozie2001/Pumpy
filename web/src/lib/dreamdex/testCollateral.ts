@@ -1,4 +1,4 @@
-import { getAddress, parseUnits } from 'viem'
+import { getAddress, parseAbi, parseUnits } from 'viem'
 
 import { getDreamDexExchange } from './client'
 import { SHANNON_CHAIN_ID, dreamdexNetwork } from './network'
@@ -9,6 +9,9 @@ export const TEST_COLLATERAL_GRANT = '20'
 export const DREAMDEX_TEST_COLLATERAL_ADDRESS = getAddress(
   dreamdexNetwork.testCollateralAddress,
 )
+const TEST_COLLATERAL_FAUCET_ABI = parseAbi(['function faucet(uint256 amount)'])
+const BALANCE_RECONCILE_ATTEMPTS = 5
+const BALANCE_RECONCILE_DELAY_MS = 600
 
 export type TestCollateralSnapshot = {
   address: Address
@@ -74,20 +77,40 @@ export async function mintTestCollateral(
     throw new Error('You need a little STT in this wallet to pay faucet gas')
   }
 
-  const trader = getDreamDexExchange().client.createTrader({
-    walletClient: session.walletClient,
-    decimals: before.decimals,
-  })
-  const transaction = await trader.faucet({
-    amount: before.grantRaw,
-    testUsdc: collateralAddress,
-  })
+  const accounts = await session.walletClient.getAddresses()
+  if (accounts[0]?.toLowerCase() !== session.address.toLowerCase()) {
+    throw new Error('The active wallet account changed')
+  }
 
-  if (transaction.receipt.status !== 'success') {
+  // Match DreamDEX's documented faucet(uint256) call directly. Let the injected
+  // wallet estimate gas instead of inheriting the SDK writer's 10M gas ceiling.
+  const hash = await session.walletClient.writeContract({
+    account: session.address,
+    chain: session.walletClient.chain,
+    address: collateralAddress,
+    abi: TEST_COLLATERAL_FAUCET_ABI,
+    functionName: 'faucet',
+    args: [before.grantRaw],
+  })
+  const receipt = await getDreamDexExchange()
+    .client.getViemClient()
+    .waitForTransactionReceipt({ hash })
+
+  if (receipt.status !== 'success') {
     throw new Error('The tUSDC faucet transaction reverted')
   }
 
-  const after = await readTestCollateral(collateralAddress, session.address)
+  let after = before
+  for (let attempt = 0; attempt < BALANCE_RECONCILE_ATTEMPTS; attempt += 1) {
+    after = await readTestCollateral(collateralAddress, session.address)
+    if (after.balanceRaw >= before.balanceRaw + before.grantRaw) break
+    if (attempt < BALANCE_RECONCILE_ATTEMPTS - 1) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, BALANCE_RECONCILE_DELAY_MS),
+      )
+    }
+  }
+
   if (after.balanceRaw < before.balanceRaw + before.grantRaw) {
     throw new Error(
       'The faucet transaction succeeded, but the expected tUSDC balance was not observed',
@@ -96,7 +119,7 @@ export async function mintTestCollateral(
 
   return {
     ...after,
-    hash: transaction.hash,
+    hash,
     balanceBeforeRaw: before.balanceRaw,
   }
 }

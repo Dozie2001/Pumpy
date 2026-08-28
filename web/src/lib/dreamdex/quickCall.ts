@@ -7,7 +7,8 @@ import type {
   QuickCallRound,
 } from './types'
 
-const STORAGE_PREFIX = 'pumpy:quick-call:v1'
+const STORAGE_PREFIX = 'pumpy:quick-call:v2'
+const LEGACY_STORAGE_PREFIX = 'pumpy:quick-call:v1'
 type StoredQuickCallRound = Omit<QuickCallRound, 'game'> & {
   game?: QuickCallRound['game']
 }
@@ -30,8 +31,15 @@ export type QuickCallChainSnapshot = {
   targetPriceRaw: string | null
 }
 
-export function quickCallStorageKey(account: Address): string {
-  return `${STORAGE_PREFIX}:${account.toLowerCase()}`
+export function quickCallStorageKey(
+  account: Address,
+  game: QuickCallRound['game'] = 'lucky',
+): string {
+  return `${STORAGE_PREFIX}:${account.toLowerCase()}:${game}`
+}
+
+function legacyQuickCallStorageKey(account: Address): string {
+  return `${LEGACY_STORAGE_PREFIX}:${account.toLowerCase()}`
 }
 
 export function createQuickCallRound(params: {
@@ -86,8 +94,25 @@ export function createQuickCallRound(params: {
 export function readQuickCallRound(
   storage: Pick<Storage, 'getItem'>,
   account: Address,
+  game: QuickCallRound['game'] = 'lucky',
 ): QuickCallRound | null {
-  const raw = storage.getItem(quickCallStorageKey(account))
+  const current = parseStoredQuickCallRound(
+    storage.getItem(quickCallStorageKey(account, game)),
+    account,
+  )
+  if (current?.game === game) return current
+
+  const legacy = parseStoredQuickCallRound(
+    storage.getItem(legacyQuickCallStorageKey(account)),
+    account,
+  )
+  return legacy?.game === game ? legacy : null
+}
+
+function parseStoredQuickCallRound(
+  raw: string | null,
+  account: Address,
+): QuickCallRound | null {
   if (!raw) return null
   try {
     const parsed: unknown = JSON.parse(raw)
@@ -169,17 +194,35 @@ function isStoredQuickCallRound(
 }
 
 export function writeQuickCallRound(
-  storage: Pick<Storage, 'setItem'>,
+  storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>,
   round: QuickCallRound,
 ): void {
-  storage.setItem(quickCallStorageKey(round.account), JSON.stringify(round))
+  storage.setItem(
+    quickCallStorageKey(round.account, round.game),
+    JSON.stringify(round),
+  )
+  const legacy = parseStoredQuickCallRound(
+    storage.getItem(legacyQuickCallStorageKey(round.account)),
+    round.account,
+  )
+  if (legacy?.game === round.game) {
+    storage.removeItem(legacyQuickCallStorageKey(round.account))
+  }
 }
 
 export function removeQuickCallRound(
-  storage: Pick<Storage, 'removeItem'>,
+  storage: Pick<Storage, 'getItem' | 'removeItem'>,
   account: Address,
+  game: QuickCallRound['game'] = 'lucky',
 ): void {
-  storage.removeItem(quickCallStorageKey(account))
+  storage.removeItem(quickCallStorageKey(account, game))
+  const legacy = parseStoredQuickCallRound(
+    storage.getItem(legacyQuickCallStorageKey(account)),
+    account,
+  )
+  if (legacy?.game === game) {
+    storage.removeItem(legacyQuickCallStorageKey(account))
+  }
 }
 
 export function deriveQuickCallSnapshot(params: {

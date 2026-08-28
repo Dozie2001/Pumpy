@@ -16,6 +16,7 @@ import type {
   PlayerWalletSession,
   PreparedPlayerTrade,
   PumpyEventMarket,
+  PumpyPlayerGame,
   QuickCallRound,
 } from './types'
 import type { Address } from 'viem'
@@ -38,7 +39,9 @@ const EMPTY: QuickCallState = {
 export function useQuickCallRound(params: {
   address: Address | null
   session: PlayerWalletSession | null
+  game?: PumpyPlayerGame
 }) {
+  const game = params.game ?? 'lucky'
   const [state, setState] = useState<QuickCallState>(EMPTY)
   const stateRef = useRef(state)
   stateRef.current = state
@@ -112,9 +115,9 @@ export function useQuickCallRound(params: {
       setState(EMPTY)
       return
     }
-    const round = readQuickCallRound(window.localStorage, params.address)
+    const round = readQuickCallRound(window.localStorage, params.address, game)
     setState(round ? { ...EMPTY, round, phase: 'loading' } : EMPTY)
-  }, [params.address])
+  }, [game, params.address])
 
   useEffect(() => {
     if (!state.round) return
@@ -125,7 +128,6 @@ export function useQuickCallRound(params: {
 
   const recordOrder = useCallback(
     (input: {
-      game?: QuickCallRound['game']
       market: PumpyEventMarket
       trade: PreparedPlayerTrade
       outcome: PlayerOrderOutcome
@@ -133,12 +135,13 @@ export function useQuickCallRound(params: {
       if (!params.address || typeof window === 'undefined') return
       const round = createQuickCallRound({
         account: params.address,
+        game,
         ...input,
       })
       writeQuickCallRound(window.localStorage, round)
       setState({ round, snapshot: null, phase: 'loading', error: null })
     },
-    [params.address],
+    [game, params.address],
   )
 
   const claim = useCallback(async () => {
@@ -270,10 +273,10 @@ export function useQuickCallRound(params: {
 
   const clear = useCallback(() => {
     if (params.address && typeof window !== 'undefined') {
-      removeQuickCallRound(window.localStorage, params.address)
+      removeQuickCallRound(window.localStorage, params.address, game)
     }
     setState(EMPTY)
-  }, [params.address])
+  }, [game, params.address])
 
   return {
     ...state,

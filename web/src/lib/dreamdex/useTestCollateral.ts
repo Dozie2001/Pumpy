@@ -18,9 +18,21 @@ function faucetError(error: unknown): string {
     typeof error === 'object' &&
     error !== null &&
     'code' in error &&
-    error.code === 4_001
+    Number(error.code) === 4_001
   ) {
     return 'The tUSDC transaction was rejected in your wallet'
+  }
+  if (typeof error === 'object' && error !== null && 'cause' in error) {
+    const nested = faucetError(error.cause)
+    if (nested !== 'Could not get test tUSDC') return nested
+  }
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'shortMessage' in error &&
+    typeof error.shortMessage === 'string'
+  ) {
+    return error.shortMessage
   }
   return error instanceof Error ? error.message : 'Could not get test tUSDC'
 }
