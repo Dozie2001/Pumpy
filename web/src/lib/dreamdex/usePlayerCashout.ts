@@ -14,10 +14,11 @@ import type {
   QuickCallRound,
 } from './types'
 
-type CashoutPhase =
+export type CashoutPhase =
   | 'idle'
   | 'loading'
   | 'ready'
+  | 'checking'
   | 'approving'
   | 'refreshing'
   | 'submitting'
@@ -29,6 +30,7 @@ type CashoutState = {
   quote: PreparedPlayerCashout | null
   outcome: PlayerCashoutOutcome | null
   error: string | null
+  authorizationRequired: boolean | null
 }
 
 const EMPTY: CashoutState = {
@@ -36,6 +38,16 @@ const EMPTY: CashoutState = {
   quote: null,
   outcome: null,
   error: null,
+  authorizationRequired: null,
+}
+
+function isBusyPhase(phase: CashoutPhase): boolean {
+  return (
+    phase === 'checking' ||
+    phase === 'approving' ||
+    phase === 'refreshing' ||
+    phase === 'submitting'
+  )
 }
 
 export function usePlayerCashout(params: {
@@ -54,12 +66,14 @@ export function usePlayerCashout(params: {
       setState(EMPTY)
       return
     }
+    if (isBusyPhase(stateRef.current.phase)) return
     if (refreshing.current) return
     refreshing.current = true
     setState((current) => ({
       ...current,
       phase: current.quote ? 'ready' : 'loading',
       error: null,
+      authorizationRequired: null,
     }))
     try {
       const quote = await preparePlayerCashout({
@@ -71,6 +85,7 @@ export function usePlayerCashout(params: {
         quote,
         outcome: current.outcome,
         error: null,
+        authorizationRequired: null,
       }))
     } catch (cause) {
       const unavailable =
@@ -84,6 +99,7 @@ export function usePlayerCashout(params: {
           cause instanceof Error
             ? cause.message
             : 'Could not read the live exit book',
+        authorizationRequired: null,
       }))
     } finally {
       refreshing.current = false
@@ -128,6 +144,7 @@ export function usePlayerCashout(params: {
     useCallback(async (): Promise<PlayerCashoutOutcome | null> => {
       const quote = stateRef.current.quote
       if (!params.round || !params.session || !quote) return null
+      if (isBusyPhase(stateRef.current.phase)) return null
       if (
         !isFullCashoutQuote({
           positionRaw: quote.positionRaw,
@@ -145,9 +162,10 @@ export function usePlayerCashout(params: {
 
       setState((current) => ({
         ...current,
-        phase: 'submitting',
+        phase: 'checking',
         outcome: null,
         error: null,
+        authorizationRequired: null,
       }))
       try {
         const outcome = await placePreparedPlayerCashout({
@@ -163,6 +181,12 @@ export function usePlayerCashout(params: {
                   : step === 'refreshing'
                     ? 'refreshing'
                     : 'submitting',
+              authorizationRequired:
+                step === 'approving'
+                  ? true
+                  : step === 'placing'
+                    ? (current.authorizationRequired ?? false)
+                    : current.authorizationRequired,
             })),
         })
         if (outcome.status !== 'filled') {
@@ -174,14 +198,26 @@ export function usePlayerCashout(params: {
               outcome.status === 'partial'
                 ? 'Only part of the position sold. Refreshing the remaining onchain balance.'
                 : 'The exit order did not fill. Your position remains open.',
+            authorizationRequired: null,
           }))
           return outcome
         }
-        setState({ phase: 'ready', quote: null, outcome, error: null })
+        setState({
+          phase: 'ready',
+          quote: null,
+          outcome,
+          error: null,
+          authorizationRequired: null,
+        })
         return outcome
       } catch (cause) {
         if (isWalletRejection(cause)) {
-          setState((current) => ({ ...current, phase: 'ready', error: null }))
+          setState((current) => ({
+            ...current,
+            phase: 'ready',
+            error: null,
+            authorizationRequired: null,
+          }))
           return null
         }
         setState((current) => ({
@@ -191,6 +227,7 @@ export function usePlayerCashout(params: {
             cause instanceof Error
               ? cause.message
               : 'The cash out did not complete',
+          authorizationRequired: null,
         }))
         if (
           cause instanceof PlayerCashoutError &&

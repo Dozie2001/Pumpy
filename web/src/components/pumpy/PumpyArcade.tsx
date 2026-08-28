@@ -41,6 +41,10 @@ import {
 import { TestCollateralCard } from '@/components/pumpy/PumpyExperience'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { useEventMarkets } from '@/lib/dreamdex/useEventMarkets'
+import {
+  liveCashoutButtonLabel,
+  liveCashoutGuidance,
+} from '@/lib/dreamdex/cashoutUi'
 import { useLiveAssetPrice } from '@/lib/dreamdex/useLiveAssetPrice'
 import {
   isCallCurrentlyWinning,
@@ -827,6 +831,7 @@ export function PumpyArcade({
         result === 'cashed-out' ||
         (result === 'voided' && !canClaim)
       const cashoutBusy =
+        cashout.phase === 'checking' ||
         cashout.phase === 'approving' ||
         cashout.phase === 'refreshing' ||
         cashout.phase === 'submitting'
@@ -840,7 +845,7 @@ export function PumpyArcade({
       return {
         action1: { label: 'HOME', color: 'neutral', onPress: () => go('hub') },
         action2: {
-          label: result === 'live' ? 'EXIT QUOTE' : 'REFRESH',
+          label: result === 'live' ? 'REPRICE' : 'REFRESH',
           color: 'neutral',
           onPress: () =>
             result === 'live'
@@ -857,15 +862,11 @@ export function PumpyArcade({
             : canPlayAgain
               ? 'PLAY AGAIN'
               : result === 'live'
-                ? cashout.phase === 'approving'
-                  ? 'AUTHORIZE'
-                  : cashout.phase === 'refreshing'
-                    ? 'REPRICE'
-                    : cashout.phase === 'submitting'
-                      ? 'CASHING OUT'
-                      : canCashout
-                        ? 'CASH OUT'
-                        : 'REFRESH EXIT'
+                ? liveCashoutButtonLabel({
+                    phase: cashout.phase,
+                    fullExitAvailable: cashout.fullExitAvailable,
+                    authorizationRequired: cashout.authorizationRequired,
+                  })
                 : 'CHECK CHAIN',
           color: canClaim || canPlayAgain || canCashout ? 'amber' : 'neutral',
           loading: quickCall.phase === 'loading' || claimBusy || cashoutBusy,
@@ -2060,9 +2061,12 @@ function LuckyPosition({
             <div className="mt-2 font-mono text-[8px] uppercase leading-[1.4] tracking-[0.06em] text-text-3">
               {expired
                 ? 'No result is shown until DreamDEX resolves onchain'
-                : cashout.fullExitAvailable
-                  ? `Full exit quoted from the live book · payout if held: $${payout}`
-                  : 'Cash out needs enough live bid liquidity for the full position'}
+                : liveCashoutGuidance({
+                    phase: cashout.phase,
+                    fullExitAvailable: cashout.fullExitAvailable,
+                    authorizationRequired: cashout.authorizationRequired,
+                    heldPayout: payout,
+                  })}
             </div>
             {!expired && cashout.error && (
               <div className="mt-2 border-l-2 border-pumpy-caution pl-2 font-mono text-[8px] uppercase leading-[1.4] text-pumpy-caution">
