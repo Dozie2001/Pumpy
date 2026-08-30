@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppPlayRouteImport } from './routes/_app/play'
+import { Route as ApiOnboardingRouteImport } from './routes/api/onboarding'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -27,32 +28,41 @@ const AppPlayRoute = AppPlayRouteImport.update({
   path: '/play',
   getParentRoute: () => AppRoute,
 } as any)
+const ApiOnboardingRoute = ApiOnboardingRouteImport.update({
+  id: '/api/onboarding',
+  path: '/api/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/play': typeof AppPlayRoute
+  '/api/onboarding': typeof ApiOnboardingRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/play': typeof AppPlayRoute
+  '/api/onboarding': typeof ApiOnboardingRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/_app/play': typeof AppPlayRoute
+  '/api/onboarding': typeof ApiOnboardingRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/play'
+  fullPaths: '/' | '/play' | '/api/onboarding'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/play'
-  id: '__root__' | '/' | '/_app' | '/_app/play'
+  to: '/' | '/play' | '/api/onboarding'
+  id: '__root__' | '/' | '/_app' | '/_app/play' | '/api/onboarding'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
+  ApiOnboardingRoute: typeof ApiOnboardingRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -78,6 +88,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPlayRouteImport
       parentRoute: typeof AppRoute
     }
+    '/api/onboarding': {
+      id: '/api/onboarding'
+      path: '/api/onboarding'
+      fullPath: '/api/onboarding'
+      preLoaderRoute: typeof ApiOnboardingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -94,6 +111,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
+  ApiOnboardingRoute: ApiOnboardingRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

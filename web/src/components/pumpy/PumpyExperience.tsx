@@ -762,7 +762,10 @@ export function TestCollateralCard({
     : null
   const funded = snapshot ? snapshot.balanceRaw >= snapshot.grantRaw : false
   const hasGas = snapshot ? snapshot.nativeBalanceRaw > 0n : true
-  const busy = collateral.phase === 'loading' || collateral.phase === 'minting'
+  const busy =
+    collateral.phase === 'loading' ||
+    collateral.phase === 'minting' ||
+    collateral.autoFunding
 
   return (
     <div className="mt-2 rounded-[15px] border border-pumpy-cyan/30 bg-pumpy-cyan/[0.06] px-3 py-2.5">
@@ -811,7 +814,19 @@ export function TestCollateralCard({
         </p>
       )}
 
-      {!hasGas && (
+      {collateral.autoFunding && (
+        <p className="mt-1.5 text-[9px] leading-[1.35] text-pumpy-cyan">
+          Preparing this wallet with test STT and 20 tUSDC…
+        </p>
+      )}
+
+      {collateral.onboardingError && !collateral.autoFunding && (
+        <p className="mt-1.5 text-[9px] leading-[1.35] text-pumpy-caution">
+          Automatic testnet top-up is unavailable. {collateral.onboardingError}
+        </p>
+      )}
+
+      {!hasGas && !collateral.autoFunding && (
         <p className="mt-1.5 text-[9px] leading-[1.35] text-pumpy-caution">
           Get STT from the hackathon faucet first so your wallet can pay gas.
         </p>

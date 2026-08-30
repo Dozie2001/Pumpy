@@ -82,6 +82,40 @@ describe('tUSDC balance onboarding', () => {
     expect(result.current.canMint).toBe(false)
   })
 
+  it('automatically prepares an empty connected test wallet', async () => {
+    const empty = {
+      ...SNAPSHOT,
+      balanceRaw: 0n,
+      nativeBalanceRaw: 0n,
+    }
+    mocks.readTestCollateral
+      .mockReset()
+      .mockResolvedValueOnce(empty)
+      .mockResolvedValue(SNAPSHOT)
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ status: 'funded' }), { status: 200 }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() =>
+      useTestCollateral({ market: null, wallet: CONNECTED_WALLET }),
+    )
+
+    await waitFor(() => expect(result.current.phase).toBe('ready'))
+    expect(fetchMock).toHaveBeenCalledWith('/api/onboarding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: ACCOUNT }),
+    })
+    expect(result.current.snapshot?.nativeBalanceRaw).toBe(10n ** 18n)
+    expect(result.current.snapshot?.balanceRaw).toBe(20_000_000n)
+    expect(result.current.onboardingError).toBeNull()
+
+    vi.unstubAllGlobals()
+  })
+
   it('refreshes the balance without invoking a wallet write', async () => {
     const { result } = renderHook(() =>
       useTestCollateral({ market: null, wallet: CONNECTED_WALLET }),

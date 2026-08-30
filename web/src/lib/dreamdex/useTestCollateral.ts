@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { parseEther } from 'viem'
 import {
   DREAMDEX_TEST_COLLATERAL_ADDRESS,
   isDreamDexTestCollateral,
@@ -12,6 +13,10 @@ import type { PlayerWalletState, PumpyEventMarket } from './types'
 
 type TestCollateralPhase =
   'idle' | 'loading' | 'ready' | 'minting' | 'success' | 'error'
+
+const MINIMUM_PLAY_GAS = parseEther('0.005')
+const ONBOARDING_RECONCILE_ATTEMPTS = 5
+const ONBOARDING_RECONCILE_DELAY_MS = 700
 
 function faucetError(error: unknown): string {
   if (
@@ -54,6 +59,68 @@ export function useTestCollateral({
   const [snapshot, setSnapshot] = useState<TestCollateralSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lastHash, setLastHash] = useState<Hash | null>(null)
+  const [autoFunding, setAutoFunding] = useState(false)
+  const [onboardingError, setOnboardingError] = useState<string | null>(null)
+  const onboardingAttempt = useRef<string | null>(null)
+
+  const automaticallyFund = useCallback(
+    async (current: TestCollateralSnapshot) => {
+      if (
+        current.nativeBalanceRaw >= MINIMUM_PLAY_GAS &&
+        current.balanceRaw >= current.grantRaw
+      ) {
+        setOnboardingError(null)
+        return current
+      }
+      if (!account || onboardingAttempt.current === account.toLowerCase()) {
+        return current
+      }
+
+      onboardingAttempt.current = account.toLowerCase()
+      setAutoFunding(true)
+      setOnboardingError(null)
+      try {
+        const response = await fetch('/api/onboarding', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address: account }),
+        })
+        const result = (await response.json().catch(() => null)) as {
+          error?: string
+        } | null
+        if (!response.ok) {
+          throw new Error(result?.error || 'Automatic testnet top-up failed')
+        }
+
+        let funded = current
+        for (
+          let attempt = 0;
+          attempt < ONBOARDING_RECONCILE_ATTEMPTS;
+          attempt += 1
+        ) {
+          funded = await readTestCollateral(collateralAddress, account)
+          if (
+            funded.nativeBalanceRaw >= MINIMUM_PLAY_GAS &&
+            funded.balanceRaw >= funded.grantRaw
+          ) {
+            return funded
+          }
+          if (attempt < ONBOARDING_RECONCILE_ATTEMPTS - 1) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, ONBOARDING_RECONCILE_DELAY_MS),
+            )
+          }
+        }
+        return funded
+      } catch (cause) {
+        setOnboardingError(faucetError(cause))
+        return current
+      } finally {
+        setAutoFunding(false)
+      }
+    },
+    [account, collateralAddress],
+  )
 
   const refresh = useCallback(async () => {
     if (!account || wallet.status !== 'connected') {
@@ -86,6 +153,7 @@ export function useTestCollateral({
     setError(null)
     setLastHash(null)
     void readTestCollateral(collateralAddress, account)
+      .then(automaticallyFund)
       .then((next) => {
         if (!active) return
         setSnapshot(next)
@@ -99,7 +167,7 @@ export function useTestCollateral({
     return () => {
       active = false
     }
-  }, [account, wallet.status])
+  }, [account, automaticallyFund, collateralAddress, wallet.status])
 
   const mint = useCallback(async () => {
     if (!canMint || !session || wallet.status !== 'connected') return
@@ -116,5 +184,15 @@ export function useTestCollateral({
     }
   }, [canMint, collateralAddress, session, wallet.status])
 
-  return { phase, snapshot, error, lastHash, canMint, mint, refresh }
+  return {
+    phase,
+    snapshot,
+    error,
+    lastHash,
+    canMint,
+    mint,
+    refresh,
+    autoFunding,
+    onboardingError,
+  }
 }

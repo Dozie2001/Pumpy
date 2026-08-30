@@ -25,6 +25,8 @@ describe('Pumpy tUSDC balance card', () => {
       canMint: false,
       mint,
       refresh,
+      autoFunding: false,
+      onboardingError: null,
     } satisfies ComponentProps<typeof TestCollateralCard>['collateral']
 
     render(<TestCollateralCard collateral={collateral} />)
