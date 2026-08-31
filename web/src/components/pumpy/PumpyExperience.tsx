@@ -749,8 +749,10 @@ function WalletCard({ wallet }: { wallet: PlayerWalletControls }) {
 
 export function TestCollateralCard({
   collateral,
+  compact = false,
 }: {
   collateral: TestCollateralControls
+  compact?: boolean
 }) {
   if (collateral.phase === 'idle') {
     return null
@@ -766,6 +768,73 @@ export function TestCollateralCard({
     collateral.phase === 'loading' ||
     collateral.phase === 'minting' ||
     collateral.autoFunding
+
+  if (compact) {
+    const status = collateral.autoFunding
+      ? 'Preparing…'
+      : funded
+        ? 'Ready'
+        : !hasGas
+          ? 'Needs STT'
+          : collateral.onboardingError
+            ? 'Top-up off'
+            : 'Needs tUSDC'
+
+    return (
+      <div
+        className="mt-1.5 flex min-h-8 items-center gap-1.5 rounded-[10px] border border-pumpy-cyan/25 bg-pumpy-cyan/[0.05] px-2 py-1"
+        title={collateral.onboardingError ?? undefined}
+      >
+        <CircleDollarSign
+          className="h-3.5 w-3.5 shrink-0 text-pumpy-cyan"
+          aria-hidden="true"
+        />
+        <span className="min-w-0 flex-1 truncate font-mono text-[8.5px] font-bold text-text">
+          {balance === null
+            ? collateral.phase === 'error'
+              ? 'Balance unavailable'
+              : 'Checking balance…'
+            : `${balance} ${snapshot?.symbol ?? 'tUSDC'}`}
+        </span>
+        {collateral.canMint && !funded && hasGas && !busy ? (
+          <button
+            type="button"
+            data-console-tap
+            onClick={() => void collateral.mint()}
+            className="min-h-6 shrink-0 rounded-[7px] bg-pumpy-cyan px-1.5 font-mono text-[7px] font-black uppercase tracking-[0.06em] text-bg"
+          >
+            Get 20
+          </button>
+        ) : (
+          <span
+            className={cnm(
+              'shrink-0 font-mono text-[7px] font-black uppercase tracking-[0.08em]',
+              funded
+                ? 'text-up'
+                : collateral.autoFunding
+                  ? 'text-pumpy-cyan'
+                  : 'text-pumpy-caution',
+            )}
+          >
+            {status}
+          </span>
+        )}
+        <button
+          type="button"
+          data-console-tap
+          aria-label="Refresh tUSDC balance"
+          disabled={busy}
+          onClick={() => void collateral.refresh()}
+          className="grid h-6 w-6 shrink-0 place-items-center rounded-[7px] bg-surface-raised text-pumpy-cyan focus-visible:ring-2 focus-visible:ring-pumpy-cyan disabled:cursor-wait disabled:text-text-3"
+        >
+          <RefreshCw
+            className={cnm('h-3 w-3', busy && 'animate-spin')}
+            aria-hidden="true"
+          />
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="mt-2 rounded-[15px] border border-pumpy-cyan/30 bg-pumpy-cyan/[0.06] px-3 py-2.5">

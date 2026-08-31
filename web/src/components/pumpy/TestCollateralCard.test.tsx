@@ -43,4 +43,35 @@ describe('Pumpy tUSDC balance card', () => {
     expect(refresh).toHaveBeenCalledTimes(1)
     expect(mint).not.toHaveBeenCalled()
   })
+
+  it('keeps the game-deck wallet state to one compact strip', () => {
+    const collateral = {
+      phase: 'ready',
+      snapshot: {
+        address: '0x70a86D8842FB63C4Ad2b7cdddF530eBf1BB25d8E',
+        symbol: 'tUSDC',
+        decimals: 6,
+        balanceRaw: 0n,
+        nativeBalanceRaw: 0n,
+        grantRaw: 20_000_000n,
+      },
+      error: null,
+      lastHash: null,
+      canMint: true,
+      mint: vi.fn(),
+      refresh: vi.fn(),
+      autoFunding: false,
+      onboardingError: 'Automatic testnet onboarding is not configured',
+    } satisfies ComponentProps<typeof TestCollateralCard>['collateral']
+
+    const { container } = render(
+      <TestCollateralCard collateral={collateral} compact />,
+    )
+
+    expect(screen.getByText('Needs STT')).toBeTruthy()
+    expect(
+      screen.queryByText(/Automatic testnet top-up is unavailable/),
+    ).toBeNull()
+    expect(container.firstElementChild?.className).toContain('min-h-8')
+  })
 })

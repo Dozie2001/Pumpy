@@ -1208,7 +1208,7 @@ function GameHub({
 
       <div
         className={cnm(
-          'border-t border-line-strong bg-black pt-3',
+          'border-t border-line-strong bg-black pt-2',
           RIM,
           RIM_BOTTOM,
         )}
@@ -1230,13 +1230,15 @@ function GameHub({
                   : `No ${asset} game live`}
             </div>
           )}
-          <div className="mt-2 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.08em] text-text-3">
-            <WalletCards className="h-3.5 w-3.5" aria-hidden="true" />
-            {wallet.address
-              ? shortId(wallet.address)
-              : 'Wallet connects when you lock a play'}
-          </div>
-          {wallet.address && <TestCollateralCard collateral={collateral} />}
+          {!wallet.address && (
+            <div className="mt-1.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.08em] text-text-3">
+              <WalletCards className="h-3.5 w-3.5" aria-hidden="true" />
+              Wallet connects when you lock a play
+            </div>
+          )}
+          {wallet.address && (
+            <TestCollateralCard collateral={collateral} compact />
+          )}
         </div>
       </div>
     </div>
